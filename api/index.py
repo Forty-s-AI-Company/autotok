@@ -44,11 +44,12 @@ class handler(BaseHTTPRequestHandler):
         path = parsed_url.path
         query_params = urllib.parse.parse_qs(parsed_url.query)
         
-        # 考慮 Vercel rewrite headers
-        req_path = self.headers.get("x-matched-path", "") or path
+        # 考慮 Vercel rewrite 傳入的 __path
+        custom_path = query_params.get("__path", [""])[0]
+        req_path = f"{path}/{custom_path}"
 
         # 1. 登入轉址
-        if "auth/login" in req_path or "auth/login" in path:
+        if "auth/login" in req_path:
             auth_url = (
                 "https://www.tiktok.com/v2/auth/authorize/?"
                 + urllib.parse.urlencode({
@@ -65,7 +66,7 @@ class handler(BaseHTTPRequestHandler):
             return
 
         # 2. OAuth 回呼處理
-        if "auth/callback" in req_path or "auth/callback" in path:
+        if "auth/callback" in req_path:
             code = query_params.get("code", [None])[0]
             error = query_params.get("error", [None])[0]
             error_desc = query_params.get("error_description", [""])[0]
@@ -180,9 +181,11 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
-        req_path = self.headers.get("x-matched-path", "") or path
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        custom_path = query_params.get("__path", [""])[0]
+        req_path = f"{path}/{custom_path}"
 
-        if "publish" in req_path or "publish" in path:
+        if "publish" in req_path:
             content_length = int(self.headers.get("Content-Length", 0))
             post_body = self.rfile.read(content_length).decode("utf-8")
             form_data = urllib.parse.parse_qs(post_body)
