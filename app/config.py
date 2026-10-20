@@ -54,6 +54,9 @@ class AppSettings(BaseSettings):
     )
     tiktok_app_audited: bool = Field(default=False, alias="TIKTOK_APP_AUDITED")
 
+    # ChatGPT / Codex CLI 模型設定（預設使用高性價比主力模型 gpt-6-sol）
+    codex_model: str = Field(default="gpt-6-sol", alias="CODEX_MODEL")
+
     # Notion (Phase 2/4 整合預留)
     notion_token: str = Field(default="", alias="NOTION_TOKEN")
     notion_database_id: str = Field(
@@ -76,5 +79,6 @@ class AppSettings(BaseSettings):
             "has_tiktok_access_token": bool(self.tiktok_access_token.strip()),
             "tiktok_verified_image_url_prefix": self.tiktok_verified_image_url_prefix,
             "tiktok_app_audited": self.tiktok_app_audited,
+            "codex_model": self.codex_model,
             "has_notion_token": bool(self.notion_token.strip()),
         }

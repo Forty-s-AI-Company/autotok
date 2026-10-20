@@ -131,7 +131,7 @@ class ChatGPTCodexCliCarouselGenerator:
     """
 
     CODEX_BIN = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
-    DEFAULT_MODEL = "gpt-6-astra"
+    DEFAULT_MODEL = "gpt-6-sol"
 
     # 針對每個時段與每一頁提供具體寫實的台灣場景描述，確保 6 張圖風格統一但場景構圖完全不同
     SLIDE_SCENE_BRIEFS: dict[ContentSlot, list[str]] = {

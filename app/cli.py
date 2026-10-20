@@ -187,6 +187,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="圖像生成引擎：codex（強制使用 ChatGPT CLI image_gen）、mock（本地快速渲染測試）、auto（有 ChatGPT CLI 時自動使用 codex）",
     )
+    prod_parser.add_argument(
+        "--codex-model",
+        default=None,
+        help="指定 ChatGPT Codex CLI 模型（預設讀取 CODEX_MODEL 或使用 gpt-6-sol）",
+    )
 
     # 8. sync-notion (Phase 4)
     sync_parser = sub.add_parser(
@@ -214,6 +219,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["auto", "codex", "mock"],
         default="auto",
         help="圖像生成引擎：codex / mock / auto（預設 auto）",
+    )
+    sync_parser.add_argument(
+        "--codex-model",
+        default=None,
+        help="指定 ChatGPT Codex CLI 模型（預設讀取 CODEX_MODEL 或使用 gpt-6-sol）",
     )
 
     # 9. gui (Phase 4 Web Dashboard GUI)
@@ -425,7 +435,8 @@ def main(argv: list[str] | None = None) -> int:
             target_slots = slot_map[args.slot]
             out_base = Path(args.output_dir) / args.date
             repo = PostStateRepository(settings.sqlite_db_path)
-            codex_gen = ChatGPTCodexCliCarouselGenerator()
+            selected_model = args.codex_model or settings.codex_model
+            codex_gen = ChatGPTCodexCliCarouselGenerator(model=selected_model)
             use_codex = args.engine == "codex" or (args.engine == "auto" and codex_gen.is_available())
 
             produced_posts: list[dict[str, object]] = []
@@ -483,7 +494,8 @@ def main(argv: list[str] | None = None) -> int:
             out_base = Path(args.output_dir) / args.date
             repo = PostStateRepository(settings.sqlite_db_path)
             sync_service = NotionSyncService(settings=settings)
-            codex_gen = ChatGPTCodexCliCarouselGenerator()
+            selected_model = args.codex_model or settings.codex_model
+            codex_gen = ChatGPTCodexCliCarouselGenerator(model=selected_model)
             use_codex = args.engine == "codex" or (args.engine == "auto" and codex_gen.is_available())
 
             sync_results: list[dict[str, object]] = []
