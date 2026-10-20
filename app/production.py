@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import hashlib
 import math
+import subprocess
 import textwrap
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
 
 from app.errors import AutotokSystemError, MediaValidationError
 from app.media import EXPECTED_HEIGHT, EXPECTED_WIDTH, verify_carousel_directory
@@ -108,6 +109,165 @@ class SceneImageProvider(ABC):
         attempt: int = 1,
     ) -> Image.Image:
         """生成單頁 1080×1350 無文字之場景背景底圖。"""
+
+
+def resize_and_crop_to_1080x1350(img_path: Path, out_jpg_path: Path) -> None:
+    """將 ChatGPT Codex CLI 生成之高解析 PNG 等比例置中裁切並輸出為 1080×1350 真實 JPEG。"""
+    with Image.open(img_path) as im:
+        rgb = im.convert("RGB")
+        fitted = ImageOps.fit(
+            rgb,
+            (EXPECTED_WIDTH, EXPECTED_HEIGHT),
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        )
+        out_jpg_path.parent.mkdir(parents=True, exist_ok=True)
+        fitted.save(out_jpg_path, format="JPEG", quality=95, optimize=True)
+
+
+class ChatGPTCodexCliCarouselGenerator:
+    """呼叫本機 ChatGPT / Codex CLI (`/Applications/ChatGPT.app/Contents/Resources/codex`)
+    內建之 `image_gen` 工具，生成具備真實台灣生活場景攝影與雜誌級排版的 6 張越南文輪播圖與 6 張繁體中文對照圖。
+    """
+
+    CODEX_BIN = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+    DEFAULT_MODEL = "gpt-6-astra"
+
+    # 針對每個時段與每一頁提供具體寫實的台灣場景描述，確保 6 張圖風格統一但場景構圖完全不同
+    SLIDE_SCENE_BRIEFS: dict[ContentSlot, list[str]] = {
+        ContentSlot.MORNING_0700: [
+            "Warm golden evening light in a cozy Taiwanese apartment near a window overlooking Taipei street lights at dusk, a cup of hot tea and a smartphone on a wooden desk, warm editorial photography",
+            "Close-up warm lifestyle photo of a young Vietnamese worker or student's hands holding a smartphone on a video call table setup with a warm notebook and lamp in Taiwan, comforting mood",
+            "Editorial flat-lay on a warm wooden desk in Taiwan: a clean monthly savings notebook, New Taiwan Dollar (NTD) budget planner cards, a pen, and a ceramic coffee mug, natural morning sunlight",
+            "A bright cozy study corner in Taiwan with Traditional Chinese-Vietnamese vocabulary flashcards, headphones, and a tablet on a wooden table, soft natural daylight",
+            "Warm weekend gathering table in Taiwan with authentic Vietnamese dishes, fresh herbs, and Taiwanese fruit tea shared among friends, candid editorial food & lifestyle photography",
+            "Inspiring morning sunrise view over a Taiwanese city street with scooters and breakfast shops waking up, warm hopeful cinematic lighting, clean negative space at top for CTA text",
+        ],
+        ContentSlot.NOON_1130: [
+            "Sunlit Taiwanese 7-Eleven / FamilyMart convenience store counter with a steaming hot roasted sweet potato in paper bag, a City Cafe cup with Taipei 101 illustration, and a colorful EasyCard (悠遊卡) on the counter, photorealistic editorial photography",
+            "Close-up photorealistic shot of a colorful Taiwan EasyCard (悠遊卡) tapping on a Taipei MRT turnstile gate with modern station lighting in the background, crisp depth of field",
+            "Photorealistic scene inside a bright Taiwanese convenience store showing neatly organized parcel pickup shelves and a friendly counter package box (店到店取貨), warm clean lighting",
+            "Photorealistic close-up of a modern touchscreenmultimedia kiosk (ibon / FamiPort style) inside a Taiwan convenience store with a smartphone and freshly printed A4 document, crisp editorial style",
+            "Appetizing editorial food photography of Taiwanese convenience store lunch favorites: marbled tea eggs (茶葉蛋), golden roasted sweet potato, and iced tea on a clean counter by the window",
+            "Warm inviting twilight exterior view of a glowing Taiwanese convenience store on a lively Taipei street corner, cinematic editorial photography with clean upper area for final CTA",
+        ],
+        ContentSlot.EVENING_1800: [
+            "Warm editorial creator workspace flat-lay: a smartphone on a small tripod, a laptop showing a 6-slide 4:5 carousel grid, coffee cup, and caramel-orange workflow cards on a cream desk",
+            "Close-up over-the-shoulder shot of a smartphone screen capturing a vertical 4:5 photo of a lively Taiwanese street scene, grid lines visible on camera screen, crisp natural lighting",
+            "Clean editorial split-layout desk scene showing 4 numbered storyboards and authentic Taiwan lifestyle photos arranged neatly on a warm textured paper surface",
+            " Clean mobile UI mockup held in hand showing TikTok vertical 4:5 safe zone margins (avoiding right-side heart/save icons and bottom caption area), crisp studio lighting",
+            "Close-up of a laptop and smartphone displaying crisp Vietnamese typography with full diacritics on a 1080x1350 vertical slide, accompanied by a color palette card and stylus",
+            "Minimalist warm editorial creator desk with a glowing notebook and smartphone displaying '@carry.vietnam.tw', caramel orange accent card, clean composition for final save & follow CTA",
+        ],
+    }
+
+    def __init__(self, *, codex_bin: Path | None = None, model: str | None = None) -> None:
+        self.codex_bin = codex_bin or self.CODEX_BIN
+        self.model = model or self.DEFAULT_MODEL
+
+    def is_available(self) -> bool:
+        return self.codex_bin.is_file()
+
+    def generate_slot_via_codex(
+        self,
+        *,
+        slot: ContentSlot,
+        vi_out_dir: Path,
+        zh_out_dir: Path,
+        workspace_dir: Path,
+    ) -> None:
+        """透過 ChatGPT Codex CLI `image_gen` 生成該時段的 6 張越南文輪播圖與 6 張繁體中文對照圖。"""
+        if not self.is_available():
+            raise AutotokSystemError(
+                f"找不到 ChatGPT Codex CLI 執行檔: {self.codex_bin}",
+                code="CODEX_CLI_NOT_FOUND",
+            )
+
+        spec = DailySlotEditorialSpec.SPECS[slot]
+        raw_slides: list[tuple[str, str, str]] = list(spec["slides"])  # type: ignore[arg-type]
+        scene_briefs = self.SLIDE_SCENE_BRIEFS[slot]
+
+        raw_png_dir = vi_out_dir.parent / "raw_codex_png"
+        raw_png_dir.mkdir(parents=True, exist_ok=True)
+        vi_out_dir.mkdir(parents=True, exist_ok=True)
+        zh_out_dir.mkdir(parents=True, exist_ok=True)
+
+        # 將 6 頁分為兩批（1–3 頁、4–6 頁）呼叫 Codex CLI，每批透過 `image_gen` 產出 6 張寫實圖片（3 越 + 3 中），兼顧穩定度與速度
+        batches = [
+            (1, 2, 3),
+            (4, 5, 6),
+        ]
+
+        for batch_indices in batches:
+            missing_in_batch = [
+                idx
+                for idx in batch_indices
+                if not (raw_png_dir / f"vi_{idx:02d}.png").is_file()
+                or not (raw_png_dir / f"zh_{idx:02d}.png").is_file()
+            ]
+            if not missing_in_batch:
+                continue
+
+            slide_instructions: list[str] = []
+            for idx in missing_in_batch:
+                vi_head, vi_body, zh_full = raw_slides[idx - 1]
+                scene_desc = scene_briefs[idx - 1]
+                zh_parts = zh_full.split("：", 1)
+                zh_head = zh_parts[0]
+                zh_body = zh_parts[1] if len(zh_parts) > 1 else zh_full
+                vi_png = (raw_png_dir / f"vi_{idx:02d}.png").resolve()
+                zh_png = (raw_png_dir / f"zh_{idx:02d}.png").resolve()
+
+                slide_instructions.append(
+                    f"""
+### Slide {idx:02d}/06
+- Photorealistic Taiwan Scene: {scene_desc}
+- Editorial Layout: Warm sunlit magazine-grade photography, top-left small brand label 'Carry | Đài Loan × Việt Nam', bottom progress dots at position {idx}/6 with text '{idx}/6', bottom-left 'SHARE', bottom-right 'SAVE'.
+- Step A (Vietnamese image): Call `image_gen` with exact on-image headline "{vi_head}" and concise subtitle "{vi_body}". Copy the generated PNG to `{vi_png}`.
+- Step B (Traditional Chinese image): Call `image_gen` with the SAME Taiwan scene style and exact on-image Traditional Chinese headline "{zh_head}" and subtitle "{zh_body}". Copy the generated PNG to `{zh_png}`.
+"""
+                )
+
+            prompt = (
+                "You are generating photorealistic TikTok 4:5 vertical carousel slides for '@carry.vietnam.tw' "
+                "(Brand: 'Carry | Đài Loan × Việt Nam').\n"
+                "CRITICAL RULES:\n"
+                "1. You MUST use your built-in `image_gen` tool for EVERY requested image below.\n"
+                "2. NEVER use Python/Pillow/ImageMagick/SVG/HTML to synthesize or draw images or text overlays. Let `image_gen` natively render both the photorealistic Taiwan photography AND the crisp editorial typography inside the image.\n"
+                "3. Keep safe margins on the right side and bottom.\n"
+                "4. Immediately after each `image_gen` call, copy the generated PNG file from `~/.codex/generated_images/...` to the exact target path specified.\n\n"
+                + "\n".join(slide_instructions)
+            )
+
+            cmd = [
+                str(self.codex_bin),
+                "exec",
+                "-m",
+                self.model,
+                "-C",
+                str(workspace_dir),
+                "-s",
+                "danger-full-access",
+                prompt,
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if proc.returncode != 0:
+                raise AutotokSystemError(
+                    f"ChatGPT Codex CLI 執行失敗 (exit={proc.returncode}): {proc.stderr[-500:] or proc.stdout[-500:]}",
+                    code="CODEX_EXEC_FAILED",
+                )
+
+        # 將 6 張越文 PNG 與 6 張中文 PNG 轉存為精確 1080×1350 JPEG
+        for idx in range(1, 7):
+            vi_png = raw_png_dir / f"vi_{idx:02d}.png"
+            zh_png = raw_png_dir / f"zh_{idx:02d}.png"
+            if not vi_png.is_file() or not zh_png.is_file():
+                raise AutotokSystemError(
+                    f"Codex CLI 未完整產出第 {idx:02d} 頁圖片 ({vi_png.name} / {zh_png.name})",
+                    code="CODEX_MISSING_OUTPUT",
+                )
+            resize_and_crop_to_1080x1350(vi_png, vi_out_dir / f"slide_{idx:02d}.jpg")
+            resize_and_crop_to_1080x1350(zh_png, zh_out_dir / f"slide_{idx:02d}.jpg")
 
 
 class ProceduralAtmosphericSceneProvider(SceneImageProvider):
@@ -517,11 +677,15 @@ def produce_carousel_with_qa_retry(
     scheduled_date_str: str,
     output_base_dir: Path,
     scene_provider: SceneImageProvider | None = None,
+    use_codex_cli: bool = False,
+    codex_generator: ChatGPTCodexCliCarouselGenerator | None = None,
     max_retries: int = 2,
     simulate_first_attempt_corrupt_slide: int | None = None,
 ) -> tuple[CarouselPostPackage, MediaValidationReport, Path]:
     """生產單篇六頁越南文輪播圖（含同步產出繁體中文對照圖），並執行 Quality Gate 與問題頁限次重製。
 
+    若 `use_codex_cli=True`，將優先使用本機 ChatGPT Codex CLI (`/Applications/ChatGPT.app/Contents/Resources/codex`)
+    內建的 `image_gen` 生成雜誌級寫實台灣生活攝影輪播圖與繁體中文對照圖，並裁切為 1080×1350 JPEG。
     回傳 `(CarouselPostPackage, MediaValidationReport, zh_reference_media_dir)`。
     若重試 `max_retries` 次後仍不合格，將 `package.status` 標記為 `QUALITY_FAILED` 並拋出 `MediaValidationError`。
     """
@@ -538,53 +702,79 @@ def produce_carousel_with_qa_retry(
     raw_slides: list[tuple[str, str, str]] = list(spec["slides"])  # type: ignore[arg-type]
     slides_items: list[SlideItem] = []
 
-    for idx, (vi_head, vi_body, zh_full) in enumerate(raw_slides, start=1):
-        bg = provider.render_background(slot=slot, slide_index=idx, attempt=1)
-
-        # 渲染越南文正式圖 (1080×1350 JPEG)
-        vi_img = renderer.render_slide(
-            bg,
-            slide_index=idx,
-            slot=slot,
-            headline_text=vi_head,
-            body_text=vi_body,
-            subtitle_note=f"Đối chiếu ZH: {zh_full[:44]}...",
-            language_label="VI",
-        )
-        vi_path = vi_dir / f"slide_{idx:02d}.jpg"
-
-        # 支援在測試中模擬第一次產生時某單頁尺寸錯誤，驗證問題頁自動限次重製機制
-        if simulate_first_attempt_corrupt_slide == idx:
-            bad_img = vi_img.resize((800, 800))
-            bad_img.save(vi_path, format="JPEG", quality=90)
-        else:
-            vi_img.save(vi_path, format="JPEG", quality=94, optimize=True)
-
-        # 同步渲染繁體中文對照版圖片（供 Notion `中文版圖片` 欄位與審稿使用）
-        zh_parts = zh_full.split("：", 1)
-        zh_head = zh_parts[0]
-        zh_body = zh_parts[1] if len(zh_parts) > 1 else zh_full
-        zh_img = renderer.render_slide(
-            bg,
-            slide_index=idx,
-            slot=slot,
-            headline_text=zh_head,
-            body_text=zh_body,
-            subtitle_note=f"VI: {vi_head}",
-            language_label="ZH",
-        )
-        zh_path = zh_dir / f"slide_{idx:02d}.jpg"
-        zh_img.save(zh_path, format="JPEG", quality=92, optimize=True)
-
-        slides_items.append(
-            SlideItem(
-                index=idx,
-                vi_text=f"{vi_head} — {vi_body}",
-                zh_tw_translation=zh_full,
-                image_path=vi_path,
-                sha256=hashlib.sha256(vi_path.read_bytes()).hexdigest(),
+    if use_codex_cli:
+        codex_gen = codex_generator or ChatGPTCodexCliCarouselGenerator()
+        # 若目標目錄已經有完整 6 張越文與 6 張中文 JPEG（例如剛由 Codex 生成完成），直接驗證並包裝，避免重複耗時生成
+        existing_vi_ok = verify_carousel_directory(vi_dir, raise_on_error=False).passed
+        existing_zh_ok = verify_carousel_directory(zh_dir, raise_on_error=False).passed
+        if not (existing_vi_ok and existing_zh_ok):
+            codex_gen.generate_slot_via_codex(
+                slot=slot,
+                vi_out_dir=vi_dir,
+                zh_out_dir=zh_dir,
+                workspace_dir=Path.cwd(),
             )
-        )
+        for idx, (vi_head, vi_body, zh_full) in enumerate(raw_slides, start=1):
+            vi_path = vi_dir / f"slide_{idx:02d}.jpg"
+            slides_items.append(
+                SlideItem(
+                    index=idx,
+                    vi_text=f"{vi_head} — {vi_body}",
+                    zh_tw_translation=zh_full,
+                    image_path=vi_path,
+                    sha256=hashlib.sha256(vi_path.read_bytes()).hexdigest(),
+                )
+            )
+        is_mock_flag = False
+    else:
+        for idx, (vi_head, vi_body, zh_full) in enumerate(raw_slides, start=1):
+            bg = provider.render_background(slot=slot, slide_index=idx, attempt=1)
+
+            # 渲染越南文正式圖 (1080×1350 JPEG)
+            vi_img = renderer.render_slide(
+                bg,
+                slide_index=idx,
+                slot=slot,
+                headline_text=vi_head,
+                body_text=vi_body,
+                subtitle_note=f"Đối chiếu ZH: {zh_full[:44]}...",
+                language_label="VI",
+            )
+            vi_path = vi_dir / f"slide_{idx:02d}.jpg"
+
+            # 支援在測試中模擬第一次產生時某單頁尺寸錯誤，驗證問題頁自動限次重製機制
+            if simulate_first_attempt_corrupt_slide == idx:
+                bad_img = vi_img.resize((800, 800))
+                bad_img.save(vi_path, format="JPEG", quality=90)
+            else:
+                vi_img.save(vi_path, format="JPEG", quality=94, optimize=True)
+
+            # 同步渲染繁體中文對照版圖片（供 Notion `中文版圖片` 欄位與審稿使用）
+            zh_parts = zh_full.split("：", 1)
+            zh_head = zh_parts[0]
+            zh_body = zh_parts[1] if len(zh_parts) > 1 else zh_full
+            zh_img = renderer.render_slide(
+                bg,
+                slide_index=idx,
+                slot=slot,
+                headline_text=zh_head,
+                body_text=zh_body,
+                subtitle_note=f"VI: {vi_head}",
+                language_label="ZH",
+            )
+            zh_path = zh_dir / f"slide_{idx:02d}.jpg"
+            zh_img.save(zh_path, format="JPEG", quality=92, optimize=True)
+
+            slides_items.append(
+                SlideItem(
+                    index=idx,
+                    vi_text=f"{vi_head} — {vi_body}",
+                    zh_tw_translation=zh_full,
+                    image_path=vi_path,
+                    sha256=hashlib.sha256(vi_path.read_bytes()).hexdigest(),
+                )
+            )
+        is_mock_flag = provider.provider_name.endswith("mock")
 
     package = CarouselPostPackage(
         post_id=post_id,
@@ -597,7 +787,7 @@ def produce_carousel_with_qa_retry(
         hashtags=list(spec["hashtags"]),  # type: ignore[arg-type]
         slides=slides_items,
         media_dir=vi_dir,
-        is_mock=(provider.provider_name.endswith("mock")),
+        is_mock=is_mock_flag,
         status=PostStatus.GENERATING,
     )
 

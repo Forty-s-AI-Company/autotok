@@ -21,7 +21,10 @@ from app.media import generate_mock_carousel_media, verify_carousel_directory
 from app.models import ContentSlot, SourceType
 from app.notion_schema import NotionInspector
 from app.notion_sync import NotionSyncService
-from app.production import produce_carousel_with_qa_retry
+from app.production import (
+    ChatGPTCodexCliCarouselGenerator,
+    produce_carousel_with_qa_retry,
+)
 from app.research import (
     INITIAL_SEED_KEYWORDS,
     JsonFileResearchProvider,
@@ -178,6 +181,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="artifacts/daily_production",
         help="輸出根目錄（預設：artifacts/daily_production）",
     )
+    prod_parser.add_argument(
+        "--engine",
+        choices=["auto", "codex", "mock"],
+        default="auto",
+        help="圖像生成引擎：codex（強制使用 ChatGPT CLI image_gen）、mock（本地快速渲染測試）、auto（有 ChatGPT CLI 時自動使用 codex）",
+    )
 
     # 8. sync-notion (Phase 4)
     sync_parser = sub.add_parser(
@@ -199,6 +208,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         default="artifacts/daily_production",
         help="生產圖片所在根目錄（若尚未生產則自動先執行 produce_carousel_with_qa_retry）",
+    )
+    sync_parser.add_argument(
+        "--engine",
+        choices=["auto", "codex", "mock"],
+        default="auto",
+        help="圖像生成引擎：codex / mock / auto（預設 auto）",
     )
 
     # 9. gui (Phase 4 Web Dashboard GUI)
@@ -410,6 +425,8 @@ def main(argv: list[str] | None = None) -> int:
             target_slots = slot_map[args.slot]
             out_base = Path(args.output_dir) / args.date
             repo = PostStateRepository(settings.sqlite_db_path)
+            codex_gen = ChatGPTCodexCliCarouselGenerator()
+            use_codex = args.engine == "codex" or (args.engine == "auto" and codex_gen.is_available())
 
             produced_posts: list[dict[str, object]] = []
             for s in target_slots:
@@ -420,6 +437,8 @@ def main(argv: list[str] | None = None) -> int:
                     post_id=post_id,
                     scheduled_date_str=args.date,
                     output_base_dir=out_base,
+                    use_codex_cli=use_codex,
+                    codex_generator=codex_gen,
                 )
                 repo.upsert_post(pkg)
                 produced_posts.append(
@@ -434,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
                         "zh_reference_media_dir": str(zh_dir),
                         "qa_passed": qa_report.passed,
                         "slide_count": qa_report.actual_count,
+                        "engine_used": "chatgpt_codex_cli" if use_codex else "procedural_mock",
                         "status": pkg.status.value,
                     }
                 )
@@ -441,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = {
                 "action": "produce-daily",
                 "target_date": args.date,
+                "engine_used": "chatgpt_codex_cli" if use_codex else "procedural_mock",
                 "posts_produced": len(produced_posts),
                 "posts": produced_posts,
             }
@@ -462,6 +483,8 @@ def main(argv: list[str] | None = None) -> int:
             out_base = Path(args.output_dir) / args.date
             repo = PostStateRepository(settings.sqlite_db_path)
             sync_service = NotionSyncService(settings=settings)
+            codex_gen = ChatGPTCodexCliCarouselGenerator()
+            use_codex = args.engine == "codex" or (args.engine == "auto" and codex_gen.is_available())
 
             sync_results: list[dict[str, object]] = []
             for s in target_slots:
@@ -472,6 +495,8 @@ def main(argv: list[str] | None = None) -> int:
                     post_id=post_id,
                     scheduled_date_str=args.date,
                     output_base_dir=out_base,
+                    use_codex_cli=use_codex,
+                    codex_generator=codex_gen,
                 )
                 res = sync_service.sync_post_to_notion(pkg, zh_media_dir=zh_dir)
                 repo.upsert_post(pkg)
@@ -480,6 +505,7 @@ def main(argv: list[str] | None = None) -> int:
             output = {
                 "action": "sync-notion",
                 "target_date": args.date,
+                "engine_used": "chatgpt_codex_cli" if use_codex else "procedural_mock",
                 "synced_count": len(sync_results),
                 "results": sync_results,
             }

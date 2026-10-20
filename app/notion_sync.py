@@ -412,6 +412,19 @@ class NotionSyncService:
                         f"更新 Notion 頁面失敗 (HTTP {patch_resp.status_code}): {patch_resp.text[:300]}",
                         code="NOTION_SYNC_ERROR",
                     )
+                # 先清除該頁面舊有的內頁區塊（如先前測試的舊版圖片），確保內頁只保留最新生成的圖片與文案
+                old_blocks_resp = client.get(
+                    f"{self.NOTION_API_BASE}/blocks/{page_id}/children?page_size=100",
+                    headers=self._headers(json_content=False),
+                )
+                if old_blocks_resp.status_code == 200:
+                    for blk in old_blocks_resp.json().get("results", []):
+                        blk_id = blk.get("id")
+                        if blk_id:
+                            client.delete(
+                                f"{self.NOTION_API_BASE}/blocks/{blk_id}",
+                                headers=self._headers(json_content=False),
+                            )
                 client.patch(
                     f"{self.NOTION_API_BASE}/blocks/{page_id}/children",
                     headers=self._headers(json_content=True),

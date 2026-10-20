@@ -111,10 +111,22 @@ def test_editorial_compliance_blocks_forbidden_claims(tmp_path: Path) -> None:
 
 
 def test_produce_daily_cli_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """測試 CLI `produce-daily` 命令。"""
+    """測試 CLI `produce-daily` 命令（單元測試強制指定 `--engine mock` 以免觸發真實 Codex image_gen 耗時呼叫）。"""
     monkeypatch.setenv("SQLITE_DB_PATH", str(tmp_path / "p3_cli.db"))
     out_dir = tmp_path / "daily_out"
-    rc = cli_main(["produce-daily", "--date", "2026-10-22", "--slot", "11:30", "--output-dir", str(out_dir)])
+    rc = cli_main(
+        [
+            "produce-daily",
+            "--date",
+            "2026-10-22",
+            "--slot",
+            "11:30",
+            "--engine",
+            "mock",
+            "--output-dir",
+            str(out_dir),
+        ]
+    )
     assert rc == 0
     assert (out_dir / "2026-10-22" / "post-2026-10-22-1130" / "vi" / "slide_01.jpg").is_file()
     assert (out_dir / "2026-10-22" / "post-2026-10-22-1130" / "zh_tw" / "slide_06.jpg").is_file()
