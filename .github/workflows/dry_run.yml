@@ -1,0 +1,60 @@
+name: Phase 1 Manual Dry-Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      adapter:
+        description: "選擇要預覽的 UploaderAdapter (mock / official_api / manual_export)"
+        required: true
+        default: "official_api"
+        type: choice
+        options:
+          - mock
+          - official_api
+          - manual_export
+      post_mode:
+        description: "官方 API 發布模式 (DIRECT_POST / MEDIA_UPLOAD)"
+        required: true
+        default: "DIRECT_POST"
+        type: choice
+        options:
+          - DIRECT_POST
+          - MEDIA_UPLOAD
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run-carousel:
+    name: Carousel Publish Dry-Run (No Live Side Effects)
+    runs-on: ubuntu-latest
+    env:
+      # 第一階段強制鎖定 ALLOW_LIVE_PUBLISH=false，禁止自動公開發文與寫入任何 Session Cookie
+      ALLOW_LIVE_PUBLISH: "false"
+      TIMEZONE: "Asia/Taipei"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Generate 6 Independent 1080x1350 Mock JPEGs
+        run: uv run python -m app generate-mock-media artifacts/mock_media/dispatch_post --post-id dispatch-001
+
+      - name: Verify Carousel Media Gate
+        run: uv run python -m app verify-media artifacts/mock_media/dispatch_post
+
+      - name: Execute Publish Dry-Run Plan
+        run: |
+          uv run python -m app publish \
+            --media-dir artifacts/mock_media/dispatch_post \
+            --post-id dispatch-001 \
+            --adapter "${{ inputs.adapter }}" \
+            --post-mode "${{ inputs.post_mode }}" \
+            --dry-run

@@ -1,0 +1,35 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Environment & Secrets (嚴禁提交任何敏感憑證、Cookie、Session、Token)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*cookies*.json
+*session*.json
+tiktok_session*
+accounts/
+
+# Runtime Data & Artifacts (本機測試產物與 SQLite 原型資料庫)
+data/*.db
+data/*.db-journal
+data/*.db-wal
+artifacts/mock_media/
+artifacts/manual_exports/
+artifacts/logs/
+
+# OS
+.DS_Store
+Thumbs.db

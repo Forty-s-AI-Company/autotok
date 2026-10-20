@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-lint:
+    name: Pytest & Ruff Check
+    runs-on: ubuntu-latest
+    env:
+      ALLOW_LIVE_PUBLISH: "false"
+      APP_ENV: "ci"
+      TIMEZONE: "Asia/Taipei"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Run Ruff linter
+        run: uv run ruff check .
+
+      - name: Run Pytest suite
+        run: uv run pytest -v
+
+      - name: Verify CLI Mock Media & Dry-Run Gate
+        run: |
+          uv run python -m app generate-mock-media artifacts/mock_media/ci_post
+          uv run python -m app verify-media artifacts/mock_media/ci_post
+          uv run python -m app publish --media-dir artifacts/mock_media/ci_post --adapter official_api --dry-run

@@ -1,0 +1,41 @@
+[project]
+name = "autotok-vietnam"
+version = "0.1.0"
+description = "TikTok 越南市場 AI 成長與自動化發布系統（Phase 1 發布可行性驗證與工程骨架）"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Private / Internal Use Only" }
+dependencies = [
+    "httpx>=0.27.0",
+    "pillow>=10.4.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+]
+
+[project.scripts]
+autotok-vn = "app.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
