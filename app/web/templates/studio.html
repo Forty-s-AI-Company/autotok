@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, fresh, chip, action_btn, empty %}
+{% block body_attrs %}data-refresh-on-job{% endblock %}
+{% block content %}
+
+<details class="panel" {% if not review %}open{% endif %} data-key="setup">
+  <summary><h2>製作設定</h2>{% if topic %}{{ chip('來自研究', '') }}{% endif %}<span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb">
+    <form class="stack" hx-post="/studio/produce" hx-swap="none">
+      <div class="row-flex" style="align-items:flex-end">
+        <div class="field" style="margin:0"><label for="sd">發布日期</label><input type="date" id="sd" name="date" value="{{ date_val }}" required></div>
+        <div class="field" style="margin:0"><label for="ss">內容線</label>
+          <select id="ss" name="slot">{% for k in slot_kinds %}<option value="{{ k.value }}"{% if k == slot_val %} selected{% endif %}>{{ market.time_for(k) }} · {{ market.track_name(k) }}</option>{% endfor %}</select></div>
+        <div class="field" style="margin:0"><label for="sc">張數</label>
+          <select id="sc" name="count">{% for c in count_choices %}<option value="{{ c }}">{{ '依內容決定' if c == 'auto' else c ~ ' 張' }}</option>{% endfor %}</select></div>
+        <div class="field" style="margin:0"><label for="se">引擎</label>
+          <select id="se" name="engine">{% for k, label in engines.items() %}<option value="{{ k }}"{% if k == 'codex' and not codex_ok %} disabled{% endif %}{% if (k == 'codex' and codex_ok) or (k == 'procedural' and not codex_ok) %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+      </div>
+
+      {% if topic %}
+      <input type="hidden" name="topic_id" value="{{ topic.topic_id }}">
+      <dl class="kv-tight">
+        <dt>題目</dt><dd>{{ topic.title_zh_tw }}</dd>
+        <dt>切角</dt><dd>{{ topic.angle }}</dd>
+      </dl>
+      <div class="field" style="margin:0"><label for="sp">補充重點（選填，每行一點）</label><textarea id="sp" name="points" rows="3"></textarea></div>
+      {% else %}
+      <div class="grid2">
+        <div class="field" style="margin:0"><label for="st">主題</label><input type="text" id="st" name="topic_title" placeholder="例如：台灣租屋簽約前要確認的 5 件事"></div>
+        <div class="field" style="margin:0"><label for="sp">重點（選填，每行一點）</label><textarea id="sp" name="points" rows="3"></textarea></div>
+      </div>
+      {% endif %}
+
+      <div class="row-flex">
+        <button class="btn primary" type="submit" data-busy="送出中…">{{ icon('i-studio') }}<span class="bl">開始製作</span></button>
+        <span class="small muted">
+          文案引擎：{% if editorial_ok %}{{ editorial_text }}{% else %}<span class="err-text">{{ editorial_text }}</span>{% endif %}
+          {% if not codex_ok %} · 生圖引擎：找不到 Codex CLI{% endif %}
+        </span>
+      </div>
+    </form>
+  </div>
+</details>
+
+{% if review %}
+{% set p = review.post %}
+<div class="panel"><div class="ph" style="flex-wrap:wrap">
+  <div style="min-width:0">
+    <h2 style="margin:0;font-size:15px">{{ p.zh_tw_title }}</h2>
+    <div class="small muted">{{ p.scheduled_at_taipei[:10] }} {{ p.scheduled_at_taipei[11:16] }} · {{ p.slide_count }} 張 1080×1350 · {{ p.post_id }}</div>
+  </div>
+  {{ chip(review.status_label, review.status_kind) }}{% if p.is_mock %}{{ chip('模擬', 'mock') }}{% endif %}
+  <span class="sp"></span>
+  {{ action_btn('重新生成', '/studio/produce', busy='開始中…', icon_name='i-refresh',
+      vals={'date': p.scheduled_at_taipei[:10], 'slot': p.slot.value, 'engine': ('procedural' if p.is_mock else 'codex'), 'count': 'auto', 'topic_title': p.zh_tw_title, 'angle': p.core_angle},
+      confirm='會覆蓋這篇的圖片與文案，確定重新生成？') }}
+  {{ action_btn('同步到 Notion', '/studio/sync', busy='同步中…', kind='primary', vals={'post_id': p.post_id},
+      disabled=(review.qa_failed|length > 0), title=('未通過品質檢查，不能同步' if review.qa_failed else ''), confirm='將上傳圖片並在 Notion 建立或更新這一篇，確定？') }}
+</div></div>
+
+<div class="studio">
+  <div class="rail" id="rail"></div>
+  <div><div class="slide-box" id="slideBox"></div><div class="small muted" style="margin-top:8px" id="slideCap"></div></div>
+  <div class="panel"><div style="padding:6px 14px 0">
+    <div class="tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-lang="zh">繁體中文（審稿）</button><button type="button" role="tab" aria-selected="false" data-lang="target">{{ market.target_language_label }}（發布）</button></div></div>
+    <div class="pb" style="border-top:0;padding-top:0">
+      <div class="field"><label>本頁標題</label><div class="v" id="fTitle"></div></div>
+      <div class="field"><label>本頁內文</label><div class="v" id="fBody"></div></div>
+      <div class="field"><label>貼文與 hashtag</label>
+        <div class="v" id="fCap" data-zh="{{ p.zh_tw_caption }}" data-target="{{ p.vi_caption }}" data-tags="{{ p.hashtags|join(' ') }}"></div></div>
+      {% if p.core_angle or p.cta %}<dl class="kv-tight" style="margin-bottom:12px">
+        {% if p.core_angle %}<dt>核心切角</dt><dd>{{ p.core_angle }}</dd>{% endif %}
+        {% if p.cta %}<dt>CTA</dt><dd lang="{{ market.target_language }}">{{ p.cta }}</dd>{% endif %}</dl>{% endif %}
+      <details open class="panel" style="background:var(--surface-2)" data-key="qa">
+        <summary><h2>品質檢查</h2>{% if review.qa_failed %}{{ chip(review.qa_failed|length ~ ' 項未通過', 'err') }}{% else %}{{ chip('全部通過', 'ok') }}{% endif %}<span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+        <div class="pb"><div class="qa">{% for r in review.qa %}<div class="r {{ 'ok' if r.ok else 'bad' }}">{{ icon('i-check' if r.ok else 'i-alert') }}<span>{{ r.text }}</span></div>{% endfor %}</div></div>
+      </details>
+      {% if review.risk_flags %}
+      <details open class="panel" style="background:var(--surface-2);margin-top:12px" data-key="risk">
+        <summary><h2>風險提醒</h2>{{ chip(review.risk_flags|length, 'warn') }}<span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+        <div class="pb"><div class="qa">{% for f in review.risk_flags %}<div class="r bad">{{ icon('i-alert') }}<span>{{ f }}</span></div>{% endfor %}</div></div>
+      </details>
+      {% endif %}
+    </div>
+  </div>
+</div>
+<script type="application/json" id="slidesData">{{ review.slides_data|tojson }}</script>
+<script>
+(function () {
+  var slides = JSON.parse(document.getElementById('slidesData').textContent), cur = 0, lang = 'zh';
+  var rail = document.getElementById('rail'), box = document.getElementById('slideBox');
+  function img(src, alt) { return src ? '<img src="' + src + '" alt="' + alt + '">' : '<div class="slide-missing">沒有找到圖片檔</div>'; }
+  function paint() {
+    var s = slides[cur], zh = lang === 'zh';
+    rail.innerHTML = '';
+    slides.forEach(function (x, k) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'thumb'; b.setAttribute('aria-current', String(k === cur)); b.setAttribute('aria-label', '第 ' + (k + 1) + ' 張');
+      var src = zh ? x.zh_img : x.target_img; if (src) { var i = document.createElement('img'); i.src = src; i.alt = ''; i.loading = 'lazy'; b.appendChild(i); }
+      var n = document.createElement('span'); n.textContent = k + 1; b.appendChild(n);
+      b.addEventListener('click', function () { cur = k; paint(); }); rail.appendChild(b);
+    });
+    box.innerHTML = img(zh ? s.zh_img : s.target_img, '第 ' + (cur + 1) + ' 張');
+    document.getElementById('slideCap').textContent = (cur + 1) + ' / ' + slides.length;
+    var t = document.getElementById('fTitle'), b = document.getElementById('fBody'), c = document.getElementById('fCap');
+    t.textContent = zh ? (s.zh_title || s.zh_body) : s.target_title; b.textContent = zh ? (s.zh_title ? s.zh_body : '') : s.target_body;
+    t.lang = b.lang = zh ? 'zh' : '{{ market.target_language }}';
+    c.textContent = (zh ? c.dataset.zh : c.dataset.target) + '\n' + c.dataset.tags; c.style.whiteSpace = 'pre-wrap';
+  }
+  document.querySelectorAll('.tabs [data-lang]').forEach(function (b) {
+    b.addEventListener('click', function () { lang = b.dataset.lang; document.querySelectorAll('.tabs [data-lang]').forEach(function (x) { x.setAttribute('aria-selected', String(x === b)); }); paint(); });
+  });
+  box.addEventListener('click', function (e) {
+    if (!e.target.closest('img') || !window.autotokLightbox) return;
+    var key = lang === 'zh' ? 'zh_img' : 'target_img';
+    window.autotokLightbox(slides.map(function (x) { return x[key]; }).filter(Boolean), cur);
+  });
+  paint();
+})();
+</script>
+{% else %}
+<div class="panel">{% call empty('還沒有選定的貼文', '用上方設定開始製作，或從下方最近的貼文挑一篇審稿。') %}{% endcall %}</div>
+{% endif %}
+
+{% if recent %}
+<details class="panel" data-key="recent">
+  <summary><h2>最近的貼文</h2><span class="badge-n">{{ recent|length }}</span><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb flush tbl"><table>
+    <tbody>{% for r in recent %}<tr class="clickable" onclick="location.href='/studio?post={{ r.post_id }}'">
+      <td class="mono small nowrap">{{ r.scheduled_at_taipei[:10] }} {{ r.scheduled_at_taipei[11:16] }}</td>
+      <td>{{ r.zh_tw_title }}</td><td class="num">{{ r.slide_count }} 張</td><td>{% if r.is_mock %}{{ chip('模擬', 'mock') }}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+</details>
+{% endif %}
+{% endblock %}

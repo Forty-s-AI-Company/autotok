@@ -1,0 +1,21 @@
+{# 「放在哪個頁面底下」清單。變數：pages、error、selected_parent、query、tz #}
+<div class="list-sel">
+  {% if error %}<div class="lr err-text">{{ error }}</div>{% endif %}
+  {% for p in pages[:50] %}
+  <label class="lr">
+    <input type="radio" name="parent_page_id" value="{{ p.id }}" required{% if selected_parent and p.id|replace('-','') == selected_parent|replace('-','') %} checked{% endif %}>
+    <span style="flex:1;min-width:0">
+      <b style="font-weight:500">{{ p.title }}</b><br>
+      <span class="small muted">
+        {%- if p.parent_type == 'workspace' %}工作區頂層
+        {%- elif p.parent_type == 'page' %}在頁面{% if p.parent_title %}「{{ p.parent_title }}」{% endif %}底下
+        {%- elif p.parent_type == 'database' %}資料庫{% if p.parent_title %}「{{ p.parent_title }}」{% endif %}中的項目
+        {%- elif p.parent_type == 'block' %}在其他頁面的區塊內
+        {%- else %}頁面{% endif %}
+        {% if p.last_edited_time %} · 最後編輯 {{ p.last_edited_time|localdt(tz) }}{% endif %}</span>
+    </span>
+  </label>
+  {% else %}
+  {% if not error %}<div class="lr muted">{% if query %}沒有符合「{{ query }}」的頁面。{% else %}沒有可存取的頁面。請在 Notion 頁面右上「…」→「連線」把此整合加進要使用的頁面，再按「重新整理清單」。{% endif %}</div>{% endif %}
+  {% endfor %}
+</div>

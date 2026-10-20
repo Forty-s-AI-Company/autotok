@@ -1,0 +1,23 @@
+{% from "_macros.html" import icon, fresh, chip, action_btn %}
+<form class="form" id="notifyForm" hx-post="/notifications/save" hx-swap="none">
+  <label class="row-flex"><input type="checkbox" name="enabled" value="1"{% if cfg.enabled %} checked{% endif %}> 啟用 Telegram 通知</label>
+  <div class="field"><label for="nTok">Bot Token</label>
+    <input type="password" id="nTok" name="token" autocomplete="off" placeholder="{{ ('已設定 ' ~ masked) if cfg.has_token else '123456:ABC…' }}"></div>
+  <div class="field"><label for="nChat">Chat ID</label><input type="text" id="nChat" name="chat_id" value="{{ cfg.chat_id }}" autocomplete="off"></div>
+  <label class="row-flex"><input type="checkbox" name="on_success" value="1"{% if cfg.on_success %} checked{% endif %}> 成功也通知</label>
+  <div class="row-flex">
+    <button class="btn primary" type="submit" data-busy="儲存中…"><span class="bl">儲存</span></button>
+    {{ action_btn('傳送測試訊息', '/notifications/test', busy='傳送中…', include='#nTok, #nChat') }}
+    <button type="button" class="btn" hx-post="/notifications/detect" hx-include="#nTok" hx-target="#nChats" hx-swap="innerHTML" data-busy="偵測中…"><span class="bl">偵測 Chat ID</span></button>
+  </div>
+  <div id="nChats"></div>
+</form>
+{% if logs %}
+<div class="qa" style="margin-top:14px">
+  {% for j in logs %}
+  <div class="r {{ 'ok' if j.status == 'ok' else 'bad' }}">{{ icon('i-check' if j.status == 'ok' else 'i-alert') }}
+    <span style="flex:1;min-width:0">{{ j.label }}{% if j.status != 'ok' and j.error %}<span class="small muted">　{{ j.error }}</span>{% endif %}</span>
+    {{ fresh(j.started_at, tz, label='', stale_min=0) }}</div>
+  {% endfor %}
+</div>
+{% endif %}

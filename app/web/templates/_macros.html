@@ -1,0 +1,32 @@
+{% macro icon(name, cls='') -%}
+<svg class="i {{ cls }}" aria-hidden="true"><use href="#{{ name }}"/></svg>
+{%- endmacro %}
+
+{# 更新時間：ts 為 ISO 字串。空值顯示「尚未更新」。stale_min 超過就變色（0 = 不判斷）。 #}
+{% macro fresh(ts, tz, label='更新於', source='', stale_min=1440) -%}
+<span class="fresh" data-stale="{{ stale_min }}" {% if not ts %}data-empty="1"{% endif %}>
+  {%- if ts -%}
+    {{ label }} <time class="mono" data-ts="{{ ts }}" datetime="{{ ts }}">{{ ts|localdt(tz) }}</time>{% if source %} · {{ source }}{% endif %}
+  {%- else -%}
+    尚未更新{% if source %} · {{ source }}{% endif %}
+  {%- endif -%}
+</span>
+{%- endmacro %}
+
+{% macro chip(text, kind='') -%}
+<span class="chip {{ kind }}">{{ text }}</span>
+{%- endmacro %}
+
+{# 會呼叫 htmx 的按鈕：busy 為進行中文字；confirm 有值時先跳出確認。 #}
+{% macro action_btn(label, post, busy='處理中…', kind='', vals=None, icon_name='', title='', disabled=False, confirm='', include='') -%}
+<button type="button" class="btn {{ kind }}" hx-post="{{ post }}" hx-swap="none"
+  {% if vals %}hx-vals='{{ vals|tojson }}'{% endif %}
+  {% if confirm %}hx-confirm="{{ confirm }}"{% endif %}{% if include %} hx-include="{{ include }}"{% endif %}
+  data-busy="{{ busy }}" {% if title %}title="{{ title }}"{% endif %} {% if disabled %}disabled{% endif %}>
+  {% if icon_name %}{{ icon(icon_name) }}{% endif %}<span class="bl">{{ label }}</span>
+</button>
+{%- endmacro %}
+
+{% macro empty(title, hint='') -%}
+<div class="empty"><b>{{ title }}</b>{% if hint %}<p>{{ hint }}</p>{% endif %}{{ caller() if caller else '' }}</div>
+{%- endmacro %}

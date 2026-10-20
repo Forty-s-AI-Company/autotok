@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, fresh, chip, empty %}
+{% block top_actions %}{{ fresh(last_observed, tz, label='最近一筆資料', source='觀察期紀錄') }}{% endblock %}
+{% block content %}
+{% if not rows %}
+<div class="panel">
+  {% call empty('還沒有成效資料' ~ ((' · 另有 ' ~ hidden_mock ~ ' 筆模擬資料已隱藏') if hidden_mock else '')) %}
+    <a class="btn" href="/settings#tiktok">查看 TikTok 連線</a>
+  {% endcall %}
+</div>
+{% else %}
+<details class="panel" open data-key="slot-summary">
+  <summary><h2>三個時段的表現</h2><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb flush tbl"><table>
+    <thead><tr><th>時段</th><th class="num">貼文數</th><th class="num">平均互動率</th><th class="num">(收藏+分享)/觀看</th><th class="num">直接歸因新增粉絲</th><th class="num">時窗相關新增粉絲</th></tr></thead>
+    <tbody>{% for s in summaries %}
+      <tr><td class="nowrap mono">{{ s.time }}<br>{{ chip(s.track) }}</td><td class="num">{{ s.posts }}</td>
+        <td class="num">{{ s.full_rate }}{% if s.partial %}<div class="small muted">另有 {{ s.partial }} 篇僅部分指標</div>{% endif %}</td>
+        <td class="num">{{ s.save_share }}</td><td class="num">{{ s.verified }}</td><td class="num">{{ s.correlated }}</td></tr>
+    {% endfor %}</tbody></table></div>
+</details>
+<details class="panel" data-key="obs">
+  <summary><h2>每篇紀錄</h2><span class="badge-n">{{ rows|length }}</span><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb flush tbl"><table>
+    <thead><tr><th>貼文</th><th>擷取時間</th><th class="num">觀看</th><th class="num">讚</th><th class="num">留言</th><th class="num">分享</th><th class="num">收藏</th><th class="num">互動率</th></tr></thead>
+    <tbody>{% for r in rows %}{% set o = r.o %}
+      <tr><td class="mono small">{{ o.post_id }}</td><td class="mono small nowrap">{{ o.observed_at|localdt(tz) }} · {{ o.window_hours }}h</td>
+        {% for v in [o.views, o.likes, o.comments, o.shares, o.saves] %}<td class="num">{{ v if v is not none else '—' }}</td>{% endfor %}
+        <td class="num">{{ r.rate }}</td></tr>
+    {% endfor %}</tbody></table></div>
+</details>
+{% endif %}
+{% endblock %}

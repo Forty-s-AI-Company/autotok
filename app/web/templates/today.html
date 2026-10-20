@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, fresh, chip %}
+{% block top_actions %}
+<form method="get" action="/" class="row-flex">
+  <label class="small muted" for="dateSel">日期</label>
+  <input type="date" id="dateSel" name="date" value="{{ date_str }}" onchange="this.form.submit()">
+</form>
+{% endblock %}
+{% block content %}
+<details class="panel" open data-key="slots">
+  <summary><h2>{{ date_label }}的三個時段</h2><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb flush tbl">
+    <table>
+      <thead><tr><th>時段</th><th>主題</th><th>進度</th><th>狀態</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td class="mono nowrap">{{ r.time }}<br>{{ chip(r.track) }}</td>
+          <td class="title-cell">
+            {% if r.post %}
+              <a href="/library#{{ r.post.post_id }}" class="row-link"><b>{{ r.post.zh_tw_title }}</b></a>
+              <span class="small muted">{{ r.post.slide_count }} 張 · {{ r.post.post_id }}</span>
+            {% else %}
+              <b class="na" style="font-weight:400">尚未選題</b>
+            {% endif %}
+          </td>
+          <td><div class="steps" role="group" aria-label="製作進度">{% for s in r.steps %}{% set sl = {'d': '已完成', 'r': '下一步', 'f': '失敗', '': '尚未開始'}[s] %}<span class="{{ s }}" tabindex="0" data-tip="{{ steps[loop.index0] }}：{{ sl }}" aria-label="{{ steps[loop.index0] }}：{{ sl }}"></span>{% endfor %}</div></td>
+          <td>{{ chip(r.status, r.status_kind) }}</td>
+          <td class="nowrap">
+            {% if not r.post %}
+              <a class="btn sm" href="/research">挑選題目</a>
+              <a class="btn sm primary" href="/studio?date={{ date_str }}&slot={{ r.kind.value }}">開始製作</a>
+            {% else %}
+              <a class="btn sm" href="/library#{{ r.post.post_id }}">查看</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+
+<details class="panel" open data-key="attention">
+  <summary><h2>需要處理</h2>{% if attention %}{{ chip(attention|length, 'warn') }}{% endif %}<span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  {% if attention %}
+  <div class="pb flush attn">
+    {% for a in attention %}
+    <div class="it {{ a.level }}">{{ icon('i-alert') }}<div class="g"><b style="font-weight:500">{{ a.title }}</b><div class="small muted">{{ a.body }}</div></div><a class="btn sm" href="{{ a.href }}">{{ a.cta }}</a></div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="pb">沒有需要處理的事項。</div>
+  {% endif %}
+</details>
+{% endblock %}

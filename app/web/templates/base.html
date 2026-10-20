@@ -1,0 +1,82 @@
+{%- from "_macros.html" import icon, fresh -%}
+<!doctype html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="autotok-token" content="{{ csrf }}">
+  <meta name="autotok-account" content="{{ active.account_id }}">
+  <title>{{ title }} · AutoTok</title>
+  <link rel="stylesheet" href="/static/vendor/swiper-bundle.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script>
+    try { var t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t;
+      if (localStorage.getItem('collapsed') === '1') document.documentElement.classList.add('pre-collapsed'); } catch (e) {}
+  </script>
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/vendor/swiper-bundle.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body {% block body_attrs %}{% endblock %}>
+{% include "_icons.html" %}
+<div class="app" id="app">
+  <aside class="side" id="side">
+    <button class="acct" id="acctBtn" aria-haspopup="true" aria-expanded="false" aria-label="切換帳號">
+      <span class="avatar">{{ (active.handle.lstrip('@')[:1] or '?')|upper }}</span>
+      <span class="t"><b>{{ active.handle }}</b><span>{{ market.target_language_label }} · {{ market.timezone.split('/')[-1]|replace('_',' ') }}</span></span>
+      {{ icon('i-chev', 'chev') }}
+    </button>
+    <div class="menu" id="acctMenu" hidden>
+      <div class="lbl">帳號</div>
+      {% for a in accounts %}
+      <button type="button" hx-post="/accounts/switch" hx-vals='{"account_id": "{{ a.account_id }}"}' hx-swap="none"{% if a.account_id == active.account_id %} aria-current="true"{% endif %}>
+        <span class="avatar">{{ (a.handle.lstrip('@')[:1] or '?')|upper }}</span>
+        <span><b style="font-weight:500">{{ a.handle }}</b>{% if a.account_id == active.account_id %} {{ icon('i-check') }}{% endif %}<br><span class="small muted">{{ a.market_focus|truncate(22, True, '…') }}</span></span>
+      </button>
+      {% endfor %}
+      <hr>
+      <a class="menu-link" href="/settings#accounts">{{ icon('i-plus') }}新增帳號</a>
+    </div>
+
+    <nav aria-label="主選單">
+      {% for key, href, label, ic in NAV_ITEMS %}
+      <a class="nav" href="{{ href }}"{% if nav == key %} aria-current="page"{% endif %}>{{ icon(ic) }}<span class="lbl">{{ label }}</span><span class="tip">{{ label }}</span></a>
+      {% endfor %}
+    </nav>
+
+    <div class="side-foot">
+      {% set worst = 'err' if system|selectattr('level','equalto','err')|list else ('warn' if system|selectattr('level','equalto','warn')|list else 'ok') %}
+      <button class="nav" id="sysBtn" type="button" aria-haspopup="true" aria-expanded="false">{{ icon('i-pulse') }}<span class="lbl">系統狀態</span><span class="n plain"><span class="dot {{ worst }}"></span></span><span class="tip">系統狀態</span></button>
+      <button class="nav" id="collapseBtn" type="button" aria-label="收合側邊欄">{{ icon('i-panel') }}<span class="lbl">收合側邊欄</span><span class="n plain mono">[</span><span class="tip">展開側邊欄 [</span></button>
+    </div>
+    <div class="menu menu-up" id="sysMenu" hidden>
+      <div class="lbl">各來源狀態</div>
+      {% for s in system %}
+      <div class="row"><span class="dot {{ s.level }}"></span><span style="flex:1">{{ s.name }}</span>
+        {% if s.ts %}{{ fresh(s.ts, tz, label='', stale_min=s.stale_min) }}{% else %}<span class="fresh">{{ s.text }}</span>{% endif %}
+      </div>
+      {% endfor %}
+      <hr>
+      <a class="menu-link" href="/settings">{{ icon('i-set') }}前往設定</a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="top">
+      <h1>{{ title }}</h1>
+      {% block top_left %}{% endblock %}
+      <span class="sp"></span>
+      {% block top_actions %}{% endblock %}
+      {% include "_activity.html" %}
+      <button class="btn ghost" id="themeBtn" type="button" aria-label="切換亮暗主題">主題</button>
+    </header>
+    <main class="content">
+      <div class="wrap">
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+  </div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

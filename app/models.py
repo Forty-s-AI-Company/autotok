@@ -73,6 +73,7 @@ class EvidenceLevel(StrEnum):
     PARTIAL_PUBLIC = "partial_public"
     AD_LIBRARY = "ad_library"
     UNVERIFIED = "unverified"
+    MANUAL_IMPORT = "manual_import"
     MOCK_FIXTURE = "mock_fixture"
 
 
@@ -115,6 +116,9 @@ class ResearchCase(BaseModel):
 
     case_id: str = Field(description="研究案例唯一識別碼")
     source_url: str = Field(min_length=1, description="唯一來源 URL")
+    title: str = Field(default="", description="來源原標題（來源語言）")
+    title_zh: str = Field(default="", description="繁體中文對照標題（沒有就留空）")
+    provider: str = Field(default="", description="產生此案例的來源 provider 名稱")
     creator: str = Field(default="unknown", description="創作者帳號或名稱")
     market: str = Field(default="VN_IN_TW", description="目標市場（VN_IN_TW 或 VN_LOCAL）")
     source_type: SourceType = Field(default=SourceType.ORGANIC, description="自然流量 (organic) 或廣告 (ad)")

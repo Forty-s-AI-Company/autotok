@@ -15,9 +15,12 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from app import credentials
+from app.markets import MarketProfile, default_profile_for_language
 from app.models import (
     DEFAULT_ACCOUNT_ID,
     CarouselPostPackage,
+    EvidenceLevel,
     PostPerformanceObservation,
     PostStatus,
     ResearchCase,
@@ -37,26 +40,6 @@ DEFAULT_ACCOUNTS_SEED: list[TikTokAccountProfile] = [
         target_language="vi",
         notion_database_id="f1bc34396f154e62bca90c9deea19d7a",
         is_active=True,
-    ),
-    TikTokAccountProfile(
-        account_id="carry-tw-food-travel",
-        handle="@carry.tw.food",
-        display_name="Carry | 台灣美食與夜市指南 (VN)",
-        market_focus="台灣道地小吃、夜市探索與週末旅遊攻略",
-        primary_language="zh-TW",
-        target_language="vi",
-        notion_database_id="f1bc34396f154e62bca90c9deea19d7a",
-        is_active=False,
-    ),
-    TikTokAccountProfile(
-        account_id="carry-digital-creator",
-        handle="@carry.creator.lab",
-        display_name="Carry | 手機創作與自媒體實戰",
-        market_focus="跨境短影音與圖文輪播教學、AI 效率工具",
-        primary_language="zh-TW",
-        target_language="vi",
-        notion_database_id="f1bc34396f154e62bca90c9deea19d7a",
-        is_active=False,
     ),
 ]
 
@@ -187,6 +170,68 @@ class PostStateRepository:
                 );
                 """
             )
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS account_settings (
+                    account_id TEXT PRIMARY KEY,
+                    market_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS account_notion (
+                    account_id TEXT PRIMARY KEY,
+                    auth_method TEXT NOT NULL DEFAULT 'token',
+                    workspace_name TEXT NOT NULL DEFAULT '',
+                    token_ref TEXT NOT NULL DEFAULT '',
+                    database_id TEXT NOT NULL DEFAULT '',
+                    database_title TEXT NOT NULL DEFAULT '',
+                    parent_page_id TEXT NOT NULL DEFAULT '',
+                    schema_missing_json TEXT NOT NULL DEFAULT '[]',
+                    schema_checked_at TEXT,
+                    verified_at TEXT,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS account_tiktok (
+                    account_id TEXT PRIMARY KEY,
+                    token_ref TEXT NOT NULL DEFAULT '',
+                    publish_capability TEXT NOT NULL DEFAULT 'export_only',
+                    expires_at TEXT,
+                    verified_at TEXT,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_id TEXT NOT NULL DEFAULT '',
+                    job TEXT NOT NULL,
+                    label TEXT NOT NULL DEFAULT '',
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    status TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    error TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS idx_sync_log_job ON sync_log (account_id, job, started_at);
+
+                CREATE TABLE IF NOT EXISTS case_fit (
+                    account_id TEXT NOT NULL,
+                    case_id TEXT NOT NULL,
+                    score REAL NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    flag TEXT NOT NULL DEFAULT '',
+                    recommended_slot TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (account_id, case_id)
+                );
+                """
+            )
             # 相容既有 SQLite 資料庫欄位遷移
             existing_cols = {
                 str(r["name"])
@@ -204,11 +249,39 @@ class PostStateRepository:
                 conn.execute(
                     "ALTER TABLE content_posts ADD COLUMN cta TEXT NOT NULL DEFAULT ''"
                 )
+            for table, col, ddl in (
+                ("research_cases", "title", "TEXT NOT NULL DEFAULT ''"),
+                ("research_cases", "title_zh", "TEXT NOT NULL DEFAULT ''"),
+                ("research_cases", "provider", "TEXT NOT NULL DEFAULT ''"),
+                ("topic_opportunities", "account_id", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                cols = {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+            # 早期的選題沒有帳號欄位，全部歸給預設帳號，讓 90 天去重仍然看得到它們
+            conn.execute(
+                "UPDATE topic_opportunities SET account_id = ? WHERE account_id = ''",
+                (DEFAULT_ACCOUNT_ID,),
+            )
 
     def _seed_default_accounts(self) -> None:
         with self._connect() as conn:
+            # 早期版本植入過兩個沒有內容的示範帳號，沒有貼文時直接移除
+            for demo_id in ("carry-tw-food-travel", "carry-digital-creator"):
+                in_use = any(
+                    conn.execute(f"SELECT 1 FROM {table} WHERE account_id = ? LIMIT 1", (demo_id,)).fetchone()
+                    for table in ("content_posts", "account_settings", "account_notion", "account_tiktok")
+                )
+                if not in_use:
+                    conn.execute("DELETE FROM tiktok_accounts WHERE account_id = ?", (demo_id,))
             count_row = conn.execute("SELECT COUNT(*) AS cnt FROM tiktok_accounts").fetchone()
             if count_row and int(count_row["cnt"]) > 0:
+                active = conn.execute("SELECT 1 FROM tiktok_accounts WHERE is_active = 1").fetchone()
+                if active is None:
+                    conn.execute(
+                        "UPDATE tiktok_accounts SET is_active = 1 WHERE account_id = "
+                        "(SELECT account_id FROM tiktok_accounts ORDER BY account_id LIMIT 1)"
+                    )
                 return
         for acc in DEFAULT_ACCOUNTS_SEED:
             self.upsert_account(acc)
@@ -506,8 +579,35 @@ class PostStateRepository:
         ]
 
     def upsert_research_case(self, case: ResearchCase) -> None:
-        """儲存或更新研究案例（確保 `source_url` 唯一，且缺失指標以 NULL 儲存，不預設填 0）。"""
+        """儲存或更新研究案例（確保 `source_url` 唯一，且缺失指標以 NULL 儲存，不預設填 0）。
+
+        同一個 URL 再次寫入時，新資料缺值的數字欄位保留既有非空值（後來資料較少的搜尋不會把已有的數字清掉）；
+        若因此保留了舊數字，證據等級與可信度取兩者中較高者，缺失欄位清單依合併後的結果重算。
+        """
+        numeric = ("views", "likes", "comments", "shares", "follower_count", "attributed_new_followers")
         with self._connect() as conn:
+            prev = conn.execute(
+                "SELECT views, likes, comments, shares, follower_count, attributed_new_followers, "
+                "missing_fields_json, evidence_level, confidence, provider, is_mock "
+                "FROM research_cases WHERE source_url = ?",
+                (case.source_url,),
+            ).fetchone()
+            if prev is not None:
+                merged = {k: getattr(case, k) if getattr(case, k) is not None else prev[k] for k in numeric}
+                kept_old = any(getattr(case, k) is None and prev[k] is not None for k in numeric)
+                update: dict[str, object] = dict(merged)
+                if kept_old and float(prev["confidence"]) > case.confidence:
+                    update["evidence_level"] = EvidenceLevel(prev["evidence_level"])
+                    update["confidence"] = float(prev["confidence"])
+                    update["provider"] = prev["provider"] or case.provider
+                    update["is_mock"] = bool(prev["is_mock"])
+                old_missing = json.loads(prev["missing_fields_json"] or "[]")
+                still_missing: list[str] = []
+                for f in [*case.missing_fields, *old_missing]:
+                    if f not in still_missing and (f not in merged or merged[f] is None):
+                        still_missing.append(f)
+                update["missing_fields"] = still_missing
+                case = case.model_copy(update=update)
             conn.execute(
                 """
                 INSERT INTO research_cases (
@@ -515,9 +615,12 @@ class PostStateRepository:
                     published_at, collected_at, views, likes, comments,
                     shares, follower_count, attributed_new_followers,
                     missing_fields_json, hook_notes, narrative_category,
-                    evidence_level, confidence, is_mock
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    evidence_level, confidence, is_mock, title, title_zh, provider
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(source_url) DO UPDATE SET
+                    title = excluded.title,
+                    title_zh = excluded.title_zh,
+                    provider = excluded.provider,
                     case_id = excluded.case_id,
                     creator = excluded.creator,
                     market = excluded.market,
@@ -557,6 +660,9 @@ class PostStateRepository:
                     case.evidence_level.value,
                     case.confidence,
                     1 if case.is_mock else 0,
+                    case.title,
+                    case.title_zh,
+                    case.provider,
                 ),
             )
 
@@ -594,12 +700,15 @@ class PostStateRepository:
                 evidence_level=r["evidence_level"],
                 confidence=float(r["confidence"]),
                 is_mock=bool(r["is_mock"]),
+                title=str(r["title"] or ""),
+                title_zh=str(r["title_zh"] or ""),
+                provider=str(r["provider"] or ""),
             )
             for r in rows
         ]
 
-    def upsert_topic_opportunity(self, topic: TopicOpportunity) -> None:
-        """儲存或更新候選主題機會（`topic_opportunities`）。"""
+    def upsert_topic_opportunity(self, topic: TopicOpportunity, *, account_id: str = "") -> None:
+        """儲存或更新候選主題機會（`topic_opportunities`），可記錄所屬帳號。"""
         with self._connect() as conn:
             conn.execute(
                 """
@@ -607,9 +716,10 @@ class PostStateRepository:
                     topic_id, title_vi, title_zh_tw, target_audience, angle,
                     recommended_slot, research_case_ids_json, score_breakdown_json,
                     weighted_score, dedup_90d_passed, dedup_reason,
-                    experiment_hypothesis, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    experiment_hypothesis, status, created_at, account_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(topic_id) DO UPDATE SET
+                    account_id = excluded.account_id,
                     title_vi = excluded.title_vi,
                     title_zh_tw = excluded.title_zh_tw,
                     target_audience = excluded.target_audience,
@@ -639,23 +749,50 @@ class PostStateRepository:
                     topic.experiment_hypothesis,
                     topic.status.value,
                     topic.created_at,
+                    account_id,
                 ),
             )
 
-    def get_recent_topics_and_urls(
-        self, *, days: int = 90
-    ) -> tuple[list[tuple[str, str]], set[str]]:
-        """查詢近 90 天內已通過查重之主題清單 `(topic_id, title_vi)` 與已被引用的來源 URL 集合。"""
-        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    def get_topic_opportunity(self, topic_id: str) -> TopicOpportunity | None:
+        """依 ID 讀取候選主題。"""
         with self._connect() as conn:
-            topic_rows = conn.execute(
-                """
-                SELECT topic_id, title_vi, research_case_ids_json
-                FROM topic_opportunities
-                WHERE created_at >= ? AND dedup_90d_passed = 1
-                """,
-                (cutoff,),
-            ).fetchall()
+            r = conn.execute("SELECT * FROM topic_opportunities WHERE topic_id = ?", (topic_id,)).fetchone()
+        if r is None:
+            return None
+        return TopicOpportunity(
+            topic_id=str(r["topic_id"]),
+            title_vi=str(r["title_vi"]),
+            title_zh_tw=str(r["title_zh_tw"]),
+            target_audience=str(r["target_audience"]),
+            angle=str(r["angle"]),
+            recommended_slot=r["recommended_slot"],
+            research_case_ids=json.loads(r["research_case_ids_json"]),
+            score_breakdown=json.loads(r["score_breakdown_json"]),
+            dedup_90d_passed=bool(r["dedup_90d_passed"]),
+            dedup_reason=str(r["dedup_reason"]),
+            experiment_hypothesis=str(r["experiment_hypothesis"]),
+            status=r["status"],
+            created_at=str(r["created_at"]),
+        )
+
+    def get_recent_topics_and_urls(
+        self, *, days: int = 90, account_id: str | None = None
+    ) -> tuple[list[tuple[str, str]], set[str]]:
+        """查詢近 90 天內已通過查重之主題清單 `(topic_id, title_vi)` 與已被引用的來源 URL 集合。
+
+        傳入 `account_id` 時只比對該帳號的歷史主題。
+        """
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        sql = (
+            "SELECT topic_id, title_vi, research_case_ids_json FROM topic_opportunities "
+            "WHERE created_at >= ? AND dedup_90d_passed = 1"
+        )
+        params: tuple[object, ...] = (cutoff,)
+        if account_id is not None:
+            sql += " AND account_id = ?"
+            params = (cutoff, account_id)
+        with self._connect() as conn:
+            topic_rows = conn.execute(sql, params).fetchall()
 
             topics: list[tuple[str, str]] = []
             referenced_case_ids: set[str] = set()
@@ -761,3 +898,270 @@ class PostStateRepository:
             )
             for r in rows
         ]
+
+    # ==========================================================================
+    # 帳號、市場設定、外部綁定、同步紀錄、案例適配度
+    # ==========================================================================
+
+    def get_account(self, account_id: str) -> TikTokAccountProfile | None:
+        for acc in self.list_accounts():
+            if acc.account_id == account_id:
+                return acc
+        return None
+
+    def delete_account(self, account_id: str) -> bool:
+        """刪除沒有任何貼文的帳號；有貼文時拒絕，避免遺失內容。"""
+        with self._connect() as conn:
+            if conn.execute(
+                "SELECT 1 FROM content_posts WHERE account_id = ? LIMIT 1", (account_id,)
+            ).fetchone():
+                return False
+            for table in ("account_settings", "account_notion", "account_tiktok", "case_fit"):
+                conn.execute(f"DELETE FROM {table} WHERE account_id = ?", (account_id,))
+            conn.execute("DELETE FROM tiktok_accounts WHERE account_id = ?", (account_id,))
+        for prefix in ("notion", "tiktok"):
+            credentials.delete_secret(f"{prefix}:{account_id}")
+        self._seed_default_accounts()
+        return True
+
+    def get_market_profile(self, account_id: str) -> MarketProfile:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT market_json FROM account_settings WHERE account_id = ?", (account_id,)
+            ).fetchone()
+        if row is not None:
+            return MarketProfile.model_validate_json(str(row["market_json"]))
+        acc = self.get_account(account_id)
+        return default_profile_for_language(acc.target_language if acc else "vi")
+
+    def save_market_profile(self, account_id: str, profile: MarketProfile) -> None:
+        now_iso = datetime.now(UTC).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO account_settings (account_id, market_json, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(account_id) DO UPDATE SET
+                    market_json = excluded.market_json, updated_at = excluded.updated_at
+                """,
+                (account_id, profile.model_dump_json(), now_iso),
+            )
+            conn.execute(
+                "UPDATE tiktok_accounts SET target_language = ?, updated_at = ? WHERE account_id = ?",
+                (profile.target_language, now_iso, account_id),
+            )
+
+    def get_notion_binding(self, account_id: str) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM account_notion WHERE account_id = ?", (account_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        data["schema_missing"] = json.loads(str(data.pop("schema_missing_json") or "[]"))
+        return data
+
+    def save_notion_binding(self, account_id: str, **fields: object) -> None:
+        """部分更新 Notion 綁定。可用欄位：auth_method、workspace_name、token_ref、database_id、
+        database_title、parent_page_id、schema_missing（list）、schema_checked_at、verified_at。"""
+        allowed = {
+            "auth_method", "workspace_name", "token_ref", "database_id", "database_title",
+            "parent_page_id", "schema_missing", "schema_checked_at", "verified_at",
+        }  # fmt: skip
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"未知的 Notion 綁定欄位：{sorted(unknown)}")
+        current = self.get_notion_binding(account_id) or {}
+        merged: dict[str, object] = {
+            "auth_method": "token", "workspace_name": "", "token_ref": "", "database_id": "",
+            "database_title": "", "parent_page_id": "", "schema_missing": [],
+            "schema_checked_at": None, "verified_at": None,
+        }  # fmt: skip
+        merged.update({k: v for k, v in current.items() if k in merged})
+        merged.update(fields)
+        now_iso = datetime.now(UTC).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO account_notion (
+                    account_id, auth_method, workspace_name, token_ref, database_id, database_title,
+                    parent_page_id, schema_missing_json, schema_checked_at, verified_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id) DO UPDATE SET
+                    auth_method = excluded.auth_method, workspace_name = excluded.workspace_name,
+                    token_ref = excluded.token_ref, database_id = excluded.database_id,
+                    database_title = excluded.database_title, parent_page_id = excluded.parent_page_id,
+                    schema_missing_json = excluded.schema_missing_json,
+                    schema_checked_at = excluded.schema_checked_at,
+                    verified_at = excluded.verified_at, updated_at = excluded.updated_at
+                """,
+                (
+                    account_id, merged["auth_method"], merged["workspace_name"], merged["token_ref"],
+                    merged["database_id"], merged["database_title"], merged["parent_page_id"],
+                    json.dumps(merged["schema_missing"], ensure_ascii=False),
+                    merged["schema_checked_at"], merged["verified_at"], now_iso,
+                ),
+            )  # fmt: skip
+
+    def clear_notion_binding(self, account_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM account_notion WHERE account_id = ?", (account_id,))
+
+    def get_tiktok_binding(self, account_id: str) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM account_tiktok WHERE account_id = ?", (account_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def save_tiktok_binding(
+        self,
+        account_id: str,
+        *,
+        token_ref: str = "",
+        publish_capability: str = "export_only",
+        expires_at: str | None = None,
+        verified_at: str | None = None,
+    ) -> None:
+        """publish_capability：`public`（可公開）、`self_only`（僅自己可見）、`export_only`（僅匯出）。"""
+        now_iso = datetime.now(UTC).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO account_tiktok (
+                    account_id, token_ref, publish_capability, expires_at, verified_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id) DO UPDATE SET
+                    token_ref = excluded.token_ref, publish_capability = excluded.publish_capability,
+                    expires_at = excluded.expires_at, verified_at = excluded.verified_at,
+                    updated_at = excluded.updated_at
+                """,
+                (account_id, token_ref, publish_capability, expires_at, verified_at, now_iso),
+            )
+
+    # --- app_settings：全站層級的設定（例如選用的模型）---
+
+    def get_app_setting(self, key: str, default: str = "") -> str:
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return str(row["value"]) if row is not None else default
+
+    def set_app_setting(self, key: str, value: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                (key, value, datetime.now(UTC).isoformat()),
+            )
+
+    # --- sync_log：所有背景工作與資料來源的更新紀錄（畫面上的「最後更新時間」來源）---
+
+    def log_job_start(self, *, account_id: str, job: str, label: str = "", at: datetime | None = None) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO sync_log (account_id, job, label, started_at, status) VALUES (?, ?, ?, ?, 'running')",
+                (account_id, job, label, (at or datetime.now(UTC)).isoformat()),
+            )
+            return int(cur.lastrowid or 0)
+
+    def log_job_finish(
+        self, log_id: int, *, status: str, summary: str = "", error: str = "", at: datetime | None = None
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE sync_log SET finished_at = ?, status = ?, summary = ?, error = ? WHERE id = ?",
+                ((at or datetime.now(UTC)).isoformat(), status, summary, error, log_id),
+            )
+
+    def last_job(self, *, account_id: str, job: str, only_ok: bool = False) -> dict[str, object] | None:
+        sql = "SELECT * FROM sync_log WHERE account_id = ? AND job = ?"
+        if only_ok:
+            sql += " AND status = 'ok'"
+        sql += " ORDER BY id DESC LIMIT 1"
+        with self._connect() as conn:
+            row = conn.execute(sql, (account_id, job)).fetchone()
+        return dict(row) if row is not None else None
+
+    def last_job_by_label(self, *, account_id: str, job: str, label: str) -> dict[str, object] | None:
+        """某個標籤（例如 post_id）最近一次成功的工作紀錄。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM sync_log WHERE account_id = ? AND job = ? AND label = ? AND status = 'ok' "
+                "ORDER BY id DESC LIMIT 1",
+                (account_id, job, label),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def job_rows(self, *, account_id: str, job: str, label: str) -> list[dict[str, object]]:
+        """某個工作＋標籤的所有紀錄（舊到新）。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM sync_log WHERE account_id = ? AND job = ? AND label = ? ORDER BY id",
+                (account_id, job, label),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def recent_jobs_like(self, *, account_id: str, prefix: str, limit: int = 5) -> list[dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM sync_log WHERE account_id = ? AND job LIKE ? ORDER BY id DESC LIMIT ?",
+                (account_id, prefix + "%", limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def running_jobs(self, *, since_iso: str) -> list[dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM sync_log WHERE status = 'running' AND started_at >= ? ORDER BY id", (since_iso,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def post_updated_at(self, post_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT updated_at FROM content_posts WHERE post_id = ?", (post_id,)).fetchone()
+        return str(row["updated_at"]) if row is not None else None
+
+    def list_jobs(self, *, account_id: str | None = None, limit: int = 20) -> list[dict[str, object]]:
+        sql = "SELECT * FROM sync_log"
+        params: tuple[object, ...] = ()
+        if account_id is not None:
+            sql += " WHERE account_id = ?"
+            params = (account_id,)
+        sql += " ORDER BY id DESC LIMIT ?"
+        with self._connect() as conn:
+            rows = conn.execute(sql, (*params, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def fail_stale_running_jobs(self) -> int:
+        """伺服器重啟後，把殘留的 running 紀錄標為中斷。"""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE sync_log SET status = 'error', finished_at = ?, error = '伺服器重新啟動，工作中斷' "
+                "WHERE status = 'running'",
+                (datetime.now(UTC).isoformat(),),
+            )
+            return cur.rowcount
+
+    # --- case_fit：研究案例對各帳號的適配度 ---
+
+    def replace_case_fits(self, account_id: str, fits: list[dict[str, object]]) -> None:
+        """整批取代某帳號的適配度。每筆需含 case_id、score，可含 reason、flag、recommended_slot。"""
+        now_iso = datetime.now(UTC).isoformat()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM case_fit WHERE account_id = ?", (account_id,))
+            conn.executemany(
+                "INSERT INTO case_fit (account_id, case_id, score, reason, flag, recommended_slot, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        account_id, str(f["case_id"]), float(f["score"]), str(f.get("reason", "")),
+                        str(f.get("flag", "")), str(f.get("recommended_slot", "")), now_iso,
+                    )
+                    for f in fits
+                ],
+            )  # fmt: skip
+
+    def list_case_fits(self, account_id: str) -> dict[str, dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM case_fit WHERE account_id = ?", (account_id,)).fetchall()
+        return {str(r["case_id"]): dict(r) for r in rows}

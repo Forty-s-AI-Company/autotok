@@ -1,0 +1,23 @@
+{% from "_macros.html" import fresh, chip %}
+<div class="small" style="margin-bottom:10px">排程最近一次執行 {{ fresh(tick.started_at if tick else None, tz, label='', stale_min=30) }}{% if tick and tick.summary %} · {{ tick.summary }}{% endif %}</div>
+{% for r in rows %}
+<form class="sched-row" hx-post="/schedule/save" hx-swap="none">
+  <input type="hidden" name="account_id" value="{{ r.acc.account_id }}">
+  <div class="sched-head"><b style="font-weight:500">{{ r.acc.handle }}</b>{% if r.market.auto_enabled %}{{ chip('自動中', 'ok') }}{% endif %}</div>
+  <div class="row-flex">
+    <label class="row-flex"><input type="checkbox" name="auto_enabled"{% if r.market.auto_enabled %} checked{% endif %}> 自動排程</label>
+    <label class="row-flex"{% if r.cap != 'public' %} title="帳號目前不能公開發布"{% endif %}><input type="checkbox" name="auto_publish"{% if r.market.auto_publish %} checked{% endif %}{% if r.cap != 'public' %} disabled{% endif %}> 自動發布</label>
+    <label class="row-flex small muted" for="rt-{{ r.acc.account_id }}">研究</label><input type="text" class="time-in" id="rt-{{ r.acc.account_id }}" name="research_time" value="{{ r.market.auto_research_time }}" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" inputmode="numeric">
+    <label class="row-flex small muted" for="pt-{{ r.acc.account_id }}">準備隔日</label><input type="text" class="time-in" id="pt-{{ r.acc.account_id }}" name="prepare_time" value="{{ r.market.auto_prepare_time }}" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" inputmode="numeric">
+    <button class="btn sm" type="submit" data-busy="儲存中…"><span class="bl">儲存</span></button>
+  </div>
+  {% if r.market.auto_enabled %}
+  <div class="small" style="margin-top:6px">{% if r.next %}下一步：{{ r.next }}{% else %}沒有待辦{% endif %}{% if r.mode == 'export' %} · 發布時匯出發布包{% endif %}</div>
+  {% endif %}
+  {% if r.recent %}
+  <div class="sched-recent">{% for x in r.recent %}<div class="small"><span class="mono muted">{{ x.row.started_at|localdt(r.market.timezone) }}</span> {{ chip(x.label, x.kind) }} {{ x.row.job|replace('auto_', '') }} · {{ x.row.label }}{% if x.text %} · <span class="muted">{{ x.text }}</span>{% endif %}</div>{% endfor %}</div>
+  {% endif %}
+</form>
+{% else %}
+<span class="muted">沒有帳號</span>
+{% endfor %}

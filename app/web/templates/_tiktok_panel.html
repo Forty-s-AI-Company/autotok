@@ -1,0 +1,19 @@
+{% from "_macros.html" import icon, fresh, chip, action_btn %}
+<dl class="kv-tight">
+  <dt>授權</dt>
+  <dd>{% if connected %}已授權{% if binding.expires_at %}，到期 {{ binding.expires_at|localdt(tz) }}{% endif %}{% else %}尚未授權{% endif %}</dd>
+  <dt>發布能力</dt>
+  <dd>{{ chip(cap_label, 'ok' if cap == 'public' else 'warn') }}</dd>
+  <dt>發布條件</dt><dd class="pill-list">{{ chip('允許發布' if live_on else '未開啟發布', 'ok' if live_on else 'warn') }}{{ chip('App 已審核' if audited else 'App 未審核', 'ok' if audited else 'warn') }}{{ chip('圖片託管已設定' if host_ready else '圖片託管未設定', 'ok' if host_ready else 'warn') }}</dd>
+  <dt>驗證時間</dt><dd>{{ fresh(binding.verified_at if binding else None, tz, label='') }}</dd>
+  <dt>回呼網址</dt><dd class="mono small">{{ redirect_uri }}</dd>
+</dl>
+<div class="row-flex" style="margin-top:12px">
+  {% if connected %}
+    {{ action_btn('重新檢查能力', '/tiktok/refresh', busy='檢查中…', icon_name='i-refresh', vals={'account_id': account.account_id}) }}
+    {{ action_btn('中斷授權', '/tiktok/disconnect', busy='處理中…', kind='ghost', vals={'account_id': account.account_id}, confirm='中斷後只能匯出，不能用 API 發布。確定？') }}
+  {% else %}
+    {{ action_btn('用 TikTok 授權', '/tiktok/connect', busy='前往 TikTok…', kind='primary', vals={'account_id': account.account_id}, disabled=not app_ready, title='' if app_ready else '請先在 .env 設定 TIKTOK_CLIENT_KEY 與 TIKTOK_CLIENT_SECRET') }}
+    {% if not app_ready %}<span class="small muted">需要先在 .env 設定 TIKTOK_CLIENT_KEY 與 TIKTOK_CLIENT_SECRET。</span>{% endif %}
+  {% endif %}
+</div>

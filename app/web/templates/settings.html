@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, fresh, chip, action_btn %}
+{% block content %}
+{% set tk = request.query_params.get('tiktok') %}
+{% if tk %}<script>document.addEventListener('DOMContentLoaded', function () { window.autotokToast && autotokToast('{{ 'ok' if tk == 'ok' else 'err' }}', '{{ {'ok': 'TikTok 授權完成', 'denied': '你取消了 TikTok 授權', 'failed': 'TikTok 授權失敗，請確認 App 憑證與回呼網址', 'state_invalid': '授權連結已失效，請重新開始授權'}.get(tk, '') }}'); });</script>{% endif %}
+
+<details class="panel" id="accounts" open data-key="accounts">
+  <summary><h2>帳號與市場</h2><span class="badge-n">{{ rows|length }}</span><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb flush tbl">
+    <table>
+      <thead><tr><th>帳號</th><th>市場</th><th>發文時段（當地）</th><th>Notion</th><th>TikTok 發布</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr{% if r.a.account_id == selected.account_id %} style="background:var(--surface-2)"{% endif %}>
+          <td><b style="font-weight:500">{{ r.a.handle }}</b>{% if r.a.is_active %} {{ chip('使用中', 'ok') }}{% endif %}<div class="small muted">{{ r.a.display_name }}</div></td>
+          <td>{{ r.market.target_language_label }} · {{ r.market.timezone.split('/')[-1]|replace('_',' ') }}<div class="small muted">審稿：繁體中文</div></td>
+          <td class="mono small nowrap">{% for k in slot_kinds %}{{ r.market.time_for(k) }} {% endfor %}</td>
+          <td>{% if r.notion and r.notion.database_id %}{{ chip('已綁定', 'ok') }}{% else %}{{ chip('未綁定') }}{% endif %}</td>
+          <td>{{ chip(r.cap, r.cap_kind) }}</td>
+          <td class="nowrap"><a class="btn sm" href="/settings?account={{ r.a.account_id }}#market" data-jump="market">編輯</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="pb">
+    <form class="row-flex" hx-post="/accounts/create" hx-swap="none" style="align-items:flex-end">
+      <div class="field" style="margin:0"><label for="nh">TikTok 帳號</label><input type="text" id="nh" name="handle" placeholder="@your.handle" required></div>
+      <div class="field" style="margin:0"><label for="nn">顯示名稱</label><input type="text" id="nn" name="display_name" placeholder="可留空"></div>
+      <div class="field" style="margin:0"><label for="nt">市場範本</label>
+        <select id="nt" name="template">{% for k, label in market_templates.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></div>
+      <button class="btn primary" type="submit" data-busy="新增中…">{{ icon('i-plus') }}<span class="bl">新增帳號</span></button>
+    </form>
+  </div>
+</details>
+
+<details class="panel" id="schedule" data-key="schedule">
+  <summary><h2>自動排程</h2><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb">
+    <div hx-get="/schedule/panel" hx-trigger="load, scheduleChanged from:body" hx-swap="innerHTML"><span class="muted">載入中…</span></div>
+  </div>
+</details>
+
+<details class="panel" id="market" open data-key="market">
+  <summary><h2>{{ selected.handle }} 的市場設定</h2><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb">
+    <form class="stack" hx-post="/settings/market" hx-swap="none">
+      <input type="hidden" name="account_id" value="{{ selected.account_id }}">
+      <div class="grid2">
+        <div class="form">
+          <div class="field"><label>TikTok 帳號與顯示名稱</label><div class="v"><b style="font-weight:500">{{ selected.handle }}</b><div class="small muted">{{ selected.display_name }}</div></div></div>
+          <div class="field"><label for="mau">受眾</label><input type="text" id="mau" name="audience" value="{{ sel_market.audience }}"></div>
+          <div class="field"><label for="mtl">發布語言</label>
+            <select id="mtl" name="target_language">{% for code, label, _ in languages %}<option value="{{ code }}"{% if code == sel_market.target_language %} selected{% endif %}>{{ label }}（{{ code }}）</option>{% endfor %}</select></div>
+          <div class="field"><label for="mtz">時區</label>
+            <select id="mtz" name="timezone">{% for z in timezones %}<option value="{{ z }}"{% if z == sel_market.timezone %} selected{% endif %}>{{ z }}</option>{% endfor %}</select></div>
+          <div class="field"><label for="mtn">語氣</label><input type="text" id="mtn" name="tone" value="{{ sel_market.tone }}"></div>
+        </div>
+        <div class="form">
+          <div class="small muted">每天三條內容線與發文時間（當地時間）</div>
+          {% for k in slot_kinds %}
+          <div class="row-flex">
+            <input type="text" class="time-in" name="time_{{ k.value }}" value="{{ sel_market.time_for(k) }}" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" inputmode="numeric" placeholder="HH:MM" aria-label="{{ sel_market.track_name(k) }} 發文時間（24 小時制）">
+            <input type="text" name="track_{{ k.value }}" value="{{ sel_market.track_name(k) }}" aria-label="內容線名稱" style="flex:1">
+          </div>
+          {% endfor %}
+          <div class="field"><label for="msc">圖片場景風格</label><textarea id="msc" name="scene_style" rows="2">{{ sel_market.scene_style }}</textarea></div>
+        </div>
+      </div>
+      <div class="field" style="margin:0"><label for="mcb">內容方向與訴求（研究與文案都會參考；研究頁每次可另外調整）</label>
+        <textarea id="mcb" name="content_brief" rows="4" placeholder="例如：想做在台灣的越南人市場，靠網路行銷吸引他們按讚、留言、分享；內容不要只有網路行銷，也要有美食、文化、創業、想家這類能引起共鳴的主題；有些貼文要有 CTA，有些可以不用。">{{ sel_market.content_brief }}</textarea></div>
+      <div class="grid2">
+        <div class="field" style="margin:0"><label for="mcn">合規提醒（每行一條，會套用到文案審核）</label><textarea id="mcn" name="compliance_notes" rows="4">{{ sel_market.compliance_notes|join('\n') }}</textarea></div>
+        <div class="field" style="margin:0"><label for="msk">研究種子關鍵字（每行一個，發布語言）</label><textarea id="msk" name="seed_keywords" rows="4">{{ sel_market.seed_keywords|join('\n') }}</textarea></div>
+      </div>
+      <div class="row-flex">
+        <button class="btn primary" type="submit" data-busy="儲存中…"><span class="bl">儲存</span></button>
+        {% if rows|length > 1 %}
+        {{ action_btn('刪除帳號', '/accounts/delete', busy='刪除中…', kind='ghost', vals={'account_id': selected.account_id}, confirm='確定刪除 ' ~ selected.handle ~ '？已有貼文的帳號無法刪除。') }}
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</details>
+
+<details class="panel" id="notion" open data-key="notion">
+  <summary><h2>Notion</h2><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb">
+    <div id="notionPanel" hx-get="/notion/panel?account_id={{ selected.account_id }}" hx-trigger="load, notionChanged from:body" hx-swap="innerHTML"><span class="muted">載入中…</span></div>
+  </div>
+</details>
+
+<details class="panel" id="tiktok" data-key="tiktok">
+  <summary><h2>TikTok 與發布</h2><span class="chip {{ 'ok' if tiktok and tiktok.publish_capability == 'public' else 'warn' }}">{{ cap_label }}</span><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb">
+    <div hx-get="/tiktok/panel?account_id={{ selected.account_id }}" hx-trigger="load, tiktokChanged from:body" hx-swap="innerHTML"><span class="muted">載入中…</span></div>
+  </div>
+</details>
+
+<details class="panel" id="notifications" data-key="notifications">
+  <summary><h2>通知</h2><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb">
+    <div hx-get="/notifications/panel" hx-trigger="load, notifyChanged from:body" hx-swap="innerHTML"><span class="muted">載入中…</span></div>
+  </div>
+</details>
+
+<details class="panel" id="engines" open data-key="engines">
+  <summary><h2>生圖與文案引擎</h2><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb">
+    <div hx-get="/engines/panel" hx-trigger="load, enginesChanged from:body" hx-swap="innerHTML"><span class="muted">載入中…</span></div>
+  </div>
+</details>
+{% endblock %}

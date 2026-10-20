@@ -34,3 +34,11 @@ artifacts/logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# 備份與本機憑證後備檔
+data/backup/
+data/secrets.json
+artifacts/analytics/
+artifacts/codex_test_*.png
+artifacts/daily_production/
+logs/

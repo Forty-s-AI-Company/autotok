@@ -1,0 +1,6 @@
+<div class="list-sel">
+  {% for c in chats %}
+  <div class="lr"><span style="flex:1;min-width:0"><b style="font-weight:500">{{ c.name }}</b> <span class="mono small muted">{{ c.id }}</span></span>
+    <button type="button" class="btn sm" data-fill="#nChat" data-value="{{ c.id }}">帶入</button></div>
+  {% endfor %}
+</div>

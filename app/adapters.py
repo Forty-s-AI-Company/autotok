@@ -206,7 +206,8 @@ class OfficialTikTokApiAdapter(UploaderAdapter):
             )
 
         raise BlockedNeedsAuthError(
-            "BLOCKED_NEEDS_AUTH：Phase 1 嚴格保護正式帳號 `@carry.vietnam.tw`，未經使用者提供實測授權憑證前不發起真實外部寫入。"
+            "BLOCKED_NEEDS_AUTH：此 adapter 只負責 payload 與閘門檢查；真實發送由 app.publisher.publish_post 執行"
+            "（取每帳號授權、圖片託管、輪詢狀態與防重發鎖）。"
         )
 
 
@@ -262,8 +263,7 @@ class ManualExportAdapter(UploaderAdapter):
         full_caption = f"{package.vi_caption}\n\n{' '.join(package.hashtags)}"
         manifest = {
             "post_id": package.post_id,
-            "account": "@carry.vietnam.tw",
-            "brand": "Carry | Đài Loan × Việt Nam",
+            "account_id": package.account_id,
             "slot": package.slot.value,
             "scheduled_at_taipei": package.scheduled_at_taipei,
             "is_mock": package.is_mock,
@@ -286,6 +286,7 @@ class ManualExportAdapter(UploaderAdapter):
 
         if not dry_run:
             images_out = export_dir / "images"
+            shutil.rmtree(images_out, ignore_errors=True)  # 張數變少後不留下舊圖
             images_out.mkdir(parents=True, exist_ok=True)
             for item in validation.items:
                 shutil.copy2(item.path, images_out / item.filename)

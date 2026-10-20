@@ -1,0 +1,17 @@
+{# 自動建立頁面與資料庫。變數：account、listing、default_db_name、bound_db_id、binding、tz #}
+<form class="form" style="max-width:640px" hx-post="/notion/create-database" hx-swap="none"
+      hx-confirm="會在你選的頁面底下新增 1 個頁面與 1 個資料庫，不會修改或刪除任何既有內容。確定建立嗎？">
+  <input type="hidden" name="account_id" value="{{ account.account_id }}">
+  <div class="field"><label for="cdName">名稱（頁面與資料庫共用）</label><input type="text" id="cdName" name="name" value="{{ default_db_name }}" maxlength="100"></div>
+  <div class="field">
+    <label for="cdSearch">放在哪個頁面底下</label>
+    <input type="search" id="cdSearch" name="q" placeholder="搜尋頁面標題" autocomplete="off"
+           hx-get="/notion/parent-pages" hx-vals='{{ {"account_id": account.account_id}|tojson }}' hx-trigger="keyup changed delay:400ms, search"
+           hx-target="#cdParents" hx-swap="innerHTML" hx-include="[name='parent_page_id']:checked" style="width:100%">
+  </div>
+  <div id="cdParents">{% with pages=listing.pages, error='', selected_parent='', query='' %}{% include "_notion_parents.html" %}{% endwith %}</div>
+  {% if bound_db_id %}
+  <label class="row-flex small"><input type="checkbox" name="replace" value="1"> 改綁到新建立的資料庫（目前的「{{ binding.database_title if binding else '' }}」與其中的內容不會被刪除）</label>
+  {% endif %}
+  <div><button class="btn primary" type="submit" data-busy="建立中…"><span class="bl">建立頁面與資料庫</span></button></div>
+</form>

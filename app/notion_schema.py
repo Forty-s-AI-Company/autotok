@@ -17,6 +17,32 @@ from pydantic import BaseModel, Field
 from app.config import AppSettings
 from app.errors import AutotokSystemError, BlockedNeedsAuthError
 
+# `NotionSyncService.sync_post_to_notion` 實際寫入的欄位（名稱 → Notion 欄位型別）。
+# 欄位檢查與「新增欄位」都以此為唯一來源。
+REQUIRED_NOTION_PROPERTIES: dict[str, str] = {
+    "主題": "title",
+    "越南文標題": "rich_text",
+    "狀態": "status",
+    "發布日期": "date",
+    "時段": "select",
+    "分類": "select",
+    "核心切角": "rich_text",
+    "CTA": "rich_text",
+    "越南文圖片": "files",
+    "中文版圖片": "files",
+    "中文對照": "checkbox",
+}
+
+# 這些欄位除了主要型別，也接受另一種型別（「狀態」可以是 status 或 select）。
+# 寫入時 `NotionSyncService` 會依資料庫實際型別決定用哪一種格式。
+ACCEPTED_ALTERNATE_TYPES: dict[str, set[str]] = {"狀態": {"select"}}
+
+# 自動建立資料庫時，「狀態」欄位（Notion API 建立資料庫時無法建立 status 型別）改用 select，並預設這些選項。
+STATUS_OPTIONS: list[str] = ["備稿", "圖片完成", "已排程", "已發布", "發布失敗"]
+
+# Notion API 不能新增這些型別的欄位，缺少時只能請使用者在 Notion 內手動建立。
+NOT_API_CREATABLE_TYPES = {"title", "status"}
+
 
 class NotionPropertySchema(BaseModel):
     """Notion 資料庫單一欄位之真實 Schema 摘要。"""

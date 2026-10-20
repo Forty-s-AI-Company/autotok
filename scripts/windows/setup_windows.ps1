@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    TikTok 越南市場 AI 成長與自動化發布系統 — Windows 10/11 環境安裝腳本 (Phase 1)
+    AutoTok — Windows 10/11 環境安裝腳本（Web 操作台與排程器）
 .DESCRIPTION
     自動檢查並安裝 uv (若尚未安裝)，配置 Python 3.12 與 .venv 虛擬環境，並執行單元測試確認環境正常。
     不會將任何敏感憑證寫入 Git 或排程日誌。
@@ -30,4 +30,4 @@ Write-Host "=== [4/4] 執行 Ruff 與 Pytest 驗證 ===" -ForegroundColor Cyan
 uv run ruff check .
 uv run pytest -v
 
-Write-Host "=== Windows 環境初始化完成！請參考 SETUP_WINDOWS.md 或執行 scripts\windows\run_dry_run.ps1 ===" -ForegroundColor Green
+Write-Host "=== 完成。啟動操作台：雙擊 啟動控制台.bat；註冊自動排程：scripts\windows\register_scheduler.ps1（說明見 docs\SETUP.md）===" -ForegroundColor Green

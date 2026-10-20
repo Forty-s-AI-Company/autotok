@@ -1,65 +1,65 @@
 #!/usr/bin/env python3
-"""免背指令單一啟動器（`run.py`）。
+"""啟動本機操作台：雙擊 `啟動控制台.command`（macOS）或 `啟動控制台.bat`（Windows）即可。
 
-支援兩種最直覺的使用方式：
-1. 直接執行 `uv run python run.py`（或雙擊 `啟動控制台.command` / `啟動控制台.bat`）：
-   - 預設直接啟動「Web 圖形化一鍵控制台 (`http://127.0.0.1:8765`)」並自動打開瀏覽器，在網頁上點按鈕即可生圖與同步 Notion。
-2. 執行 `uv run python run.py --menu`：
-   - 進入繁體中文互動式數字選單（按 1~5 即可操作，完全不必背任何指令參數）。
+- 已經有一個新版操作台在跑：直接打開瀏覽器到它，不重複啟動。
+- 預設的 8765 埠被別的程式（例如舊版）佔用：自動改用下一個空的埠，並打開瀏覽器到新位址。
+命令列工具請用 `uv run autotok-vn --help`。
 """
 
 from __future__ import annotations
 
-import sys
-from datetime import datetime, timedelta
+import argparse
+import json
+import socket
+import urllib.request
+import webbrowser
 from pathlib import Path
 
-from app.cli import main as cli_main
 from app.config import AppSettings
-from app.gui import run_gui_server
+from app.web.main import run_server
 
 
-def run_interactive_menu() -> int:
-    """終端機繁體中文數字選單（1~5）。"""
-    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    while True:
-        print("\n" + "=" * 64)
-        print(" 🚀 Carry | Đài Loan × Việt Nam — 免背指令快速選單")
-        print("=" * 64)
-        print("  [1] 🌐 開啟「網頁圖形化一鍵控制台」（自動打開瀏覽器，最推薦！）")
-        print(f"  [2] 🎨 一鍵生產明天 ({tomorrow}) 全日三時段雙語寫實圖 ＋ 同步至 Notion")
-        print("  [3] 🎯 指定日期與單一時段（07:00 / 11:30 / 18:00）生圖 ＋ 同步至 Notion")
-        print("  [4] 📊 執行每週市場研究與 Phase 5 成效權重優化報告")
-        print("  [5] ❌ 離開")
-        print("=" * 64)
-        choice = input("請輸入數字 [1-5]（直接按 Enter 預設選 1）：").strip() or "1"
+def port_is_free(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex((host, port)) != 0
 
-        if choice == "1":
-            run_gui_server(open_browser=True)
-            return 0
-        if choice == "2":
-            return cli_main(["sync-notion", "--date", tomorrow, "--slot", "all", "--engine", "codex"])
-        if choice == "3":
-            target_date = input(f"請輸入日期 YYYY-MM-DD（直接按 Enter 預設 {tomorrow}）：").strip() or tomorrow
-            slot = input("請輸入時段 [all / 07:00 / 11:30 / 18:00]（預設 11:30）：").strip() or "11:30"
-            return cli_main(["sync-notion", "--date", target_date, "--slot", slot, "--engine", "codex"])
-        if choice == "4":
-            cli_main(["seed-keywords"])
-            cli_main(["research-batch", "--provider", "mock"])
-            return cli_main(["analytics-report", "--mode", "mock"])
-        if choice == "5":
-            print("👋 再見！")
-            return 0
-        print("⚠️ 請輸入有效的選項數字 1 到 5。")
+
+def is_autotok(host: str, port: int) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=1.5) as r:  # noqa: S310
+            return json.loads(r.read().decode()).get("app") == "autotok"
+    except Exception:
+        return False
 
 
 def main() -> int:
-    project_root = Path(__file__).resolve().parent
-    if "--menu" in sys.argv:
-        return run_interactive_menu()
-    # 預設直接啟動圖形化 Web 控制台並自動打開瀏覽器
-    settings = AppSettings()
-    run_gui_server(project_root=project_root, settings=settings, open_browser=True)
+    parser = argparse.ArgumentParser(description="啟動 AutoTok 本機操作台")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--no-browser", action="store_true", help="不自動開啟瀏覽器")
+    args = parser.parse_args()
+
+    port = args.port
+    for candidate in range(args.port, args.port + 20):
+        if port_is_free(args.host, candidate):
+            port = candidate
+            break
+        if is_autotok(args.host, candidate):
+            url = f"http://{args.host}:{candidate}/"
+            print(f"AutoTok 已經在執行：{url}")
+            if not args.no_browser:
+                webbrowser.open(url)
+            return 0
+    else:
+        print(f"{args.port} 到 {args.port + 19} 的埠都被佔用，請關閉其他程式後再試。")
+        return 1
+    if port != args.port:
+        print(f"{args.port} 埠被其他程式佔用（可能是舊版），改用 {port} 埠。")
+
+    root = Path(__file__).resolve().parent
+    print(f"AutoTok 已啟動：http://{args.host}:{port}/（關閉這個視窗即結束）")
+    run_server(root, AppSettings(), host=args.host, port=port, open_browser=not args.no_browser)
     return 0
 
 

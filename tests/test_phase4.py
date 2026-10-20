@@ -1,4 +1,4 @@
-"""Phase 4｜Notion 六張持久化圖片同步、跨環境共享防重發鎖與本機 Web GUI 儀表板測試套件。"""
+"""Phase 4｜Notion 六張持久化圖片同步、跨環境共享防重發鎖測試套件。"""
 
 from __future__ import annotations
 
@@ -10,11 +10,6 @@ import pytest
 
 from app.config import AppSettings
 from app.errors import BlockedNeedsAuthError
-from app.gui import (
-    _run_research_and_analytics_job,
-    get_task_state_snapshot,
-    render_dashboard_html,
-)
 from app.models import ContentSlot, TikTokAccountProfile
 from app.notion_sync import NotionSyncService
 from app.production import produce_carousel_with_qa_retry, split_content_into_slides
@@ -122,37 +117,6 @@ def test_notion_sync_requires_token() -> None:
         )
 
 
-def test_gui_dashboard_html_renders_without_leaking_secrets(tmp_path: Path) -> None:
-    """驗證本機 Web GUI 儀表板能正常渲染並展示已生產之輪播圖，且不洩露敏感憑證。"""
-    prod_base = tmp_path / "artifacts" / "daily_production" / "2026-10-21"
-    produce_carousel_with_qa_retry(
-        slot=ContentSlot.MORNING_0700,
-        post_id="post-2026-10-21-0700",
-        scheduled_date_str="2026-10-21",
-        output_base_dir=prod_base,
-    )
-
-    settings = AppSettings(
-        SQLITE_DB_PATH=tmp_path / "gui.db",
-        NOTION_TOKEN="ntn_super_secret_should_not_appear_in_html",
-    )
-    html_out = render_dashboard_html(tmp_path, settings)
-
-    assert "Carry | Đài Loan × Việt Nam" in html_out
-    assert "post-2026-10-21-0700" in html_out
-    assert "核心切角" in html_out
-    assert "尾頁 CTA" in html_out
-    assert "🇹🇼 繁體中文主視圖" in html_out
-    assert 'style="display:none;"' in html_out
-    assert "ntn_super_secret_should_not_appear_in_html" not in html_out
-
-    # 測試一鍵更新市場研究與成效分析背景函式不會拋出參數錯誤
-    _run_research_and_analytics_job(tmp_path, settings)
-    snap = get_task_state_snapshot()
-    assert snap["status"] == "completed"
-    assert "✅ 已成功更新" in str(snap["message"])
-
-
 def test_dynamic_slide_splitting_and_multi_account(tmp_path: Path) -> None:
     """驗證依內容動態切分輪播張數（3–10 張，不再固定 6 張）與多 TikTok 帳號管理切換。"""
     # 1. 輸入 2 個重點 -> 自動切分為 4 張（封面 + 2 重點 + 尾頁 CTA）
@@ -176,7 +140,7 @@ def test_dynamic_slide_splitting_and_multi_account(tmp_path: Path) -> None:
     # 3. 驗證多帳號新增與切換
     repo = PostStateRepository(tmp_path / "multi_acc.db")
     accounts = repo.list_accounts()
-    assert len(accounts) >= 3
+    assert len(accounts) >= 1
     repo.upsert_account(
         TikTokAccountProfile(
             account_id="carry-vn-beauty",

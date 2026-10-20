@@ -1,0 +1,38 @@
+{% from "_macros.html" import icon, fresh, chip, action_btn %}
+<dl class="kv-tight">
+  <dt>Codex CLI</dt>
+  <dd>{% if engine.ok %}{{ chip('已找到', 'ok') }}<div class="small muted mono" style="margin-top:4px">{{ engine.path }}</div>{% else %}{{ chip('找不到', 'err') }}<div class="small muted" style="margin-top:4px">{{ engine.detail }}</div>{% endif %}</dd>
+  <dt>模型掃描</dt>
+  <dd>
+    {% if scan %}
+      {% if scan.running %}{{ chip('掃描中…') }}
+      {% else %}{{ chip({'ok': '可用', 'warn': '需留意', 'err': '失效'}.get(scan.level, scan.level), {'ok': 'ok', 'warn': 'warn', 'err': 'err'}.get(scan.level, '')) }} {{ fresh(scan.finished_at, tz, label='掃描於', stale_min=0) }}{% endif %}
+      <div class="small {{ 'err-text' if scan.level == 'err' else 'muted' }}" style="margin-top:4px">{{ scan.message }}</div>
+    {% else %}<span class="muted">尚未掃描</span>{% endif %}
+  </dd>
+  <dt>選用模型</dt>
+  <dd>
+    {% if models %}
+    <form class="row-flex" hx-post="/engines/model" hx-swap="none">
+      <select name="model" aria-label="選用模型" style="min-width:240px">
+        {% if not model_in_list %}<option value="{{ model }}" selected>{{ model }}（已不在清單）</option>{% endif %}
+        {% for m in models %}<option value="{{ m.slug }}" title="{{ m.description }}"{% if m.slug == model %} selected{% endif %}>{{ m.name }}（{{ m.slug }}）</option>{% endfor %}
+      </select>
+      <button class="btn" type="submit" data-busy="套用中…"><span class="bl">套用</span></button>
+    </form>
+    {% else %}
+    <span class="mono">{{ model }}</span>
+    <div class="small muted" style="margin-top:4px">{{ list_error or '取不到模型清單，暫時不能切換。' }}</div>
+    {% endif %}
+  </dd>
+  <dt>測試連線</dt>
+  <dd>
+    <div class="row-flex">
+      {{ action_btn('重新掃描', '/engines/scan', busy='掃描中…', icon_name='i-refresh') }}
+      {{ action_btn('測試呼叫模型', '/engines/ping', busy='測試中…', confirm='會實際呼叫一次 ' ~ model ~ '，消耗極少量額度。繼續？', title='實際呼叫一次模型，確認它能回應') }}
+    </div>
+    {% if ping %}<div class="small {{ 'err-text' if ping.status == 'error' else 'muted' }}" style="margin-top:6px">
+      上次測試：{% if ping.status == 'running' %}進行中…{% elif ping.status == 'ok' %}{{ ping.summary }}{% else %}{{ ping.error }}{% endif %}
+      {% if ping.finished_at %}（{{ fresh(ping.finished_at, tz, label='', stale_min=0) }}）{% endif %}</div>{% endif %}
+  </dd>
+</dl>

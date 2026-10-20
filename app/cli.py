@@ -21,7 +21,6 @@ from app.analytics import (
 )
 from app.config import AppSettings, redact_sensitive
 from app.errors import AutotokSystemError
-from app.gui import run_gui_server
 from app.media import generate_mock_carousel_media, verify_carousel_directory
 from app.models import ContentSlot, SourceType
 from app.notion_schema import NotionInspector
@@ -38,6 +37,7 @@ from app.research import (
     compute_engagement_metrics,
 )
 from app.state import PostStateRepository
+from app.web.main import run_server
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -247,6 +247,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=8765,
         help="監聽埠號（預設：8765）",
     )
+
+    # 9b. scheduler（由系統排程每 10 分鐘呼叫 tick）
+    sched_parser = sub.add_parser("scheduler", help="自動排程：依各帳號當地時間執行到期的研究、製作、同步與發布")
+    sched_parser.add_argument("action", choices=["tick"], help="tick：執行一次到期的工作（冪等）")
+    sched_parser.add_argument("--dry-run", action="store_true", help="只列出規劃，不執行也不寫入")
+    sched_parser.add_argument("--account", default=None, help="只處理指定帳號 ID")
 
     # 10. analytics-report (Phase 5)
     analytics_parser = sub.add_parser(
@@ -551,8 +557,29 @@ def main(argv: list[str] | None = None) -> int:
             print(redact_sensitive(json.dumps(output, ensure_ascii=False, indent=2)))
             return 0
 
+        if args.command == "scheduler":
+            from datetime import UTC, datetime
+
+            from app.scheduler import format_plan, tick
+
+            now = datetime.now(UTC)
+            res = tick(
+                PostStateRepository(settings.sqlite_db_path), settings, Path.cwd(),
+                now_utc=now, dry_run=args.dry_run, account_id=args.account,
+            )  # fmt: skip
+            if args.dry_run:
+                lines = format_plan(res.planned, now) or ["沒有啟用自動排程的帳號"]
+                print("\n".join(lines))
+            elif res.skipped_reason:
+                print(f"略過：{res.skipped_reason}")
+            else:
+                print(redact_sensitive(f"完成 {len(res.done)} 項，失敗 {len(res.failed)} 項"))
+                for line in [*res.done, *res.failed]:
+                    print(redact_sensitive(f"  {line}"))
+            return 1 if res.failed and not args.dry_run else 0
+
         if args.command == "gui":
-            run_gui_server(host=args.host, port=args.port, settings=settings)
+            run_server(host=args.host, port=args.port, settings=settings)
             return 0
 
         if args.command == "analytics-report":

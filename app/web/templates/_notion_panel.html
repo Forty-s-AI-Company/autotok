@@ -1,0 +1,104 @@
+{% from "_macros.html" import icon, fresh, chip, action_btn %}
+
+{% if flash %}<div class="notice {{ flash.kind }}">{{ flash.msg }}{% if flash.url %}　<a href="{{ flash.url }}" target="_blank" rel="noopener" style="text-decoration:underline">在 Notion 開啟</a>{% endif %}</div>{% endif %}
+{% if pending %}<div class="notice warn">有一個建立到一半的頁面「{{ pending.name }}」{% if pending.url %}（<a href="{{ pending.url }}" target="_blank" rel="noopener" style="text-decoration:underline">在 Notion 開啟</a>）{% endif %}。資料庫尚未建立；再按一次「建立頁面與資料庫」會沿用它，不會重複建立。</div>{% endif %}
+
+{% if not connected %}
+<div class="notion-conn">
+  <div class="tabs" data-tabs>
+    <button type="button" aria-selected="{{ 'true' if oauth_enabled else 'false' }}" data-tab="n-oauth">用 Notion 登入</button>
+    <button type="button" aria-selected="{{ 'false' if oauth_enabled else 'true' }}" data-tab="n-token">貼上 Token</button>
+  </div>
+  <div data-pane="n-oauth"{% if not oauth_enabled %} hidden{% endif %}>
+    {% if oauth_enabled %}
+      <a class="btn primary" href="/notion/oauth/start?account_id={{ account.account_id }}">用 Notion 登入</a>
+    {% else %}
+      <p class="muted" style="margin:0 0 8px">先建立一次 Notion 整合：</p>
+      <ol class="steps-list">
+        <li>開啟 <a href="https://www.notion.so/profile/integrations" target="_blank" rel="noopener" style="text-decoration:underline">notion.so/profile/integrations</a>，建立新整合，類型選「Public」。</li>
+        <li>Redirect URI 填入：<span class="mono small">{{ redirect_uri }}</span></li>
+        <li>能力勾選「讀取內容」「更新內容」「插入內容」。</li>
+        <li>把整合的 Client ID 與 Client secret 填進專案的 <span class="mono">.env</span>：<span class="mono small">NOTION_CLIENT_ID</span>、<span class="mono small">NOTION_CLIENT_SECRET</span>。</li>
+        <li>重新啟動操作台，這裡就會出現「用 Notion 登入」。</li>
+      </ol>
+    {% endif %}
+  </div>
+  <div data-pane="n-token"{% if oauth_enabled %} hidden{% endif %}>
+    <form class="form" hx-post="/notion/connect-token" hx-swap="none">
+      <input type="hidden" name="account_id" value="{{ account.account_id }}">
+      <div class="field"><label for="ntok">內部整合 Token</label><input type="password" id="ntok" name="token" autocomplete="off" placeholder="ntn_… 或 secret_…" required></div>
+      <div><button class="btn primary" type="submit" data-busy="驗證中…"><span class="bl">連線</span></button></div>
+    </form>
+  </div>
+  {% if has_global_token %}<p class="muted small" style="margin:12px 0 0">偵測到 .env 的全域 Token，但目前沒有可用的資料庫設定。</p>{% endif %}
+</div>
+
+{% else %}
+<div class="row-flex" style="margin-bottom:12px">
+  {{ chip('已連線', 'ok') }}
+  <b style="font-weight:500">{{ binding.workspace_name if binding and binding.workspace_name else 'Notion 工作區' }}</b>
+  <span class="muted small">連線方式：{{ auth_label }}</span>
+  <span class="sp"></span>
+  {{ fresh(binding.verified_at if binding else None, tz, label='驗證於') }}
+  {{ action_btn('重新整理清單', '/notion/refresh', busy='讀取中…', kind='sm', vals={'account_id': account.account_id}, icon_name='i-refresh') }}
+  {% if not using_global %}{{ action_btn('中斷連線', '/notion/disconnect', busy='處理中…', kind='sm ghost', vals={'account_id': account.account_id}, confirm='中斷後會刪除這個帳號儲存的 Notion Token，既有的 Notion 資料不受影響。確定嗎？') }}{% endif %}
+</div>
+{% if using_global %}<div class="notice warn">此帳號正在使用 .env 的全域 Token。若要讓每個帳號各用自己的 Notion，請先中斷全域設定並改用個別連線。</div>{% endif %}
+{% if listing.error %}<div class="notice err">{{ listing.error }}</div>{% endif %}
+
+{% if not bound_db_id %}
+<div style="margin-bottom:16px">
+  <b style="font-weight:500">自動建立資料庫</b>
+  {% include "_notion_create.html" %}
+</div>
+{% endif %}
+
+<div>
+  <div class="small muted" style="margin-bottom:6px">{% if bound_db_id %}此帳號要寫入的資料庫{% else %}或綁定既有的資料庫{% endif %}{% if listing.fetched_at %}　{{ fresh(listing.fetched_at, tz, label='清單更新於', stale_min=0) }}{% endif %}</div>
+  <div class="list-sel">
+    {% for d in listing.databases %}
+    <div class="lr{% if d.id|replace('-','') == bound_db_id|replace('-','') %} on{% endif %}">
+      <span style="flex:1;min-width:0"><b style="font-weight:500">{{ d.title }}</b><br><span class="small muted">資料庫 · 最後編輯 {{ d.last_edited_time|localdt(tz) }}</span></span>
+      {% if d.id|replace('-','') == bound_db_id|replace('-','') %}{{ chip('已綁定', 'ok') }}
+      {% else %}<button type="button" class="btn sm" hx-post="/notion/bind-database" hx-swap="none" hx-vals='{{ {"account_id": account.account_id, "database_id": d.id, "database_title": d.title}|tojson }}' data-busy="綁定中…"><span class="bl">綁定</span></button>{% endif %}
+    </div>
+    {% else %}
+    <div class="lr"><span class="muted">沒有找到資料庫。可以用上面的「自動建立資料庫」，或在 Notion 的資料庫右上角「…」→「連線」加入此整合，再按「重新整理清單」。</span></div>
+    {% endfor %}
+  </div>
+</div>
+
+<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+  {% if not bound_db_id %}
+    <span class="muted">綁定資料庫後會自動檢查欄位。</span>
+  {% elif schema %}
+    <div class="row-flex">
+      <b style="font-weight:500">欄位檢查</b>
+      <span class="small muted">系統寫入需要 {{ schema.total }} 個欄位，{{ schema.present|length }} 個相符</span>
+      {{ chip('全部相符', 'ok') if schema.ok else chip('有差異', 'warn') }}
+      <span class="sp"></span>
+      {{ fresh(binding.schema_checked_at if binding else None, tz, label='檢查於') }}
+      {{ action_btn('重新檢查', '/notion/recheck', busy='檢查中…', kind='sm', vals={'account_id': account.account_id}, icon_name='i-refresh') }}
+    </div>
+    <div class="qa" style="margin-top:6px">
+      {% if schema.present %}<div class="r ok">{{ icon('i-check') }}<span>{{ schema.present|join('、') }}</span></div>{% endif %}
+      {% for m in schema.missing %}<div class="r bad">{{ icon('i-alert') }}<span>缺少「{{ m.name }}」（{{ m.type_label }}）{% if not m.creatable %}<span class="muted small">　無法由程式新增，請在 Notion 內手動建立</span>{% endif %}</span></div>{% endfor %}
+      {% for m in schema.type_mismatch %}<div class="r bad">{{ icon('i-alert') }}<span>「{{ m.name }}」型別不符：需要 {{ m.expected }}，目前是 {{ m.actual }}<span class="muted small">　請在 Notion 內手動調整</span></span></div>{% endfor %}
+    </div>
+    {% if schema.creatable_missing %}
+    <div style="margin-top:10px">
+      {{ action_btn('新增缺少的欄位（' ~ schema.creatable_missing|length ~ '）', '/notion/add-fields', busy='新增中…', kind='primary', vals={'account_id': account.account_id}, confirm='將在「' ~ (binding.database_title if binding else '') ~ '」新增 ' ~ schema.creatable_missing|length ~ ' 個欄位：' ~ (schema.creatable_missing|map(attribute='label')|join('、')) ~ '。既有欄位與資料不會變動，也不會刪除任何內容。確定新增嗎？') }}
+    </div>
+    {% endif %}
+  {% else %}
+    <span class="muted">無法讀取欄位，請確認資料庫已分享給此整合。</span>
+  {% endif %}
+</div>
+
+{% if bound_db_id %}
+<details class="sub" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px" data-key="notion-create">
+  <summary><b style="font-weight:500">自動建立另一個資料庫</b></summary>
+  <div style="margin-top:10px">{% include "_notion_create.html" %}</div>
+</details>
+{% endif %}
+{% endif %}

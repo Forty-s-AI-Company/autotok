@@ -35,7 +35,7 @@ from app.config import AppSettings
 from app.errors import AutotokSystemError, BlockedNeedsAuthError
 from app.media import verify_carousel_directory
 from app.models import CarouselPostPackage, PostStatus
-from app.production import SLOT_TO_NOTION_CATEGORY, DailySlotEditorialSpec
+from app.production import SLOT_TO_NOTION_CATEGORY
 
 POST_STATUS_TO_NOTION_STATUS: dict[PostStatus, str] = {
     PostStatus.DRAFT: "備稿",
@@ -51,6 +51,20 @@ POST_STATUS_TO_NOTION_STATUS: dict[PostStatus, str] = {
     PostStatus.UNKNOWN: "已排程",
     PostStatus.BLOCKED_NEEDS_AUTH: "圖片完成",
 }
+
+
+NOTION_TEXT_LIMIT = 2000
+NOTION_APPEND_BATCH = 100
+
+
+def rich_text(text: str) -> list[dict[str, Any]]:
+    """Notion 的單段 rich_text 上限是 2000 字元；長文切成多段。空字串回傳空清單（用來清空欄位）。"""
+    if not text:
+        return []
+    return [
+        {"type": "text", "text": {"content": text[i : i + NOTION_TEXT_LIMIT]}}
+        for i in range(0, len(text), NOTION_TEXT_LIMIT)
+    ]
 
 
 class NotionSyncResult(BaseModel):
@@ -76,12 +90,61 @@ class NotionSyncService:
         settings: AppSettings | None = None,
         *,
         transport: httpx.BaseTransport | None = None,
+        token: str | None = None,
+        database_id: str | None = None,
     ) -> None:
         self.settings = settings or AppSettings()
         self._transport = transport
+        # 帳號專屬的 Token／資料庫 ID；未提供時沿用 settings（舊行為）
+        self._token_override = token
+        self._status_kind_cache: str | None = None
+        self._database_id_override = database_id
+
+    @classmethod
+    def for_account(
+        cls,
+        repo: Any,
+        settings: AppSettings,
+        account_id: str,
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> NotionSyncService | None:
+        """依帳號的 Notion 綁定建立同步服務；未綁定資料庫或沒有 Token 時回傳 None。"""
+        from app.integrations.notion.binding import resolve_account_credentials
+
+        creds = resolve_account_credentials(repo, settings, account_id)
+        if creds is None:
+            return None
+        return cls(settings, transport=transport, token=creds.token, database_id=creds.database_id)
+
+    def _status_property_kind(self, client: httpx.Client) -> str:
+        """「狀態」欄位在這個資料庫是 `status` 還是 `select`（自動建立的資料庫用 select）。
+
+        每個服務實例只讀一次資料庫 schema 並快取；讀不到或沒有該欄位時沿用既有行為（status）。
+        """
+        cached = self._status_kind_cache
+        if cached is not None:
+            return cached
+        kind = "status"
+        try:
+            resp = client.get(f"{self.NOTION_API_BASE}/databases/{self._db_id()}", headers=self._headers(json_content=False))
+            if resp.status_code == 200:
+                ptype = ((resp.json().get("properties") or {}).get("狀態") or {}).get("type")
+                if ptype == "select":
+                    kind = "select"
+        except Exception:  # noqa: BLE001 - 偵測失敗不應阻斷同步
+            kind = "status"
+        self._status_kind_cache = kind
+        return kind
+
+    def _db_id(self) -> str:
+        if self._database_id_override is not None:
+            return self._database_id_override.strip()
+        return self.settings.notion_database_id.strip()
 
     def _require_token(self) -> str:
-        token = self.settings.notion_token.strip()
+        raw = self._token_override if self._token_override is not None else self.settings.notion_token
+        token = raw.strip()
         if not token:
             raise BlockedNeedsAuthError(
                 "BLOCKED_NEEDS_AUTH：未設定 NOTION_TOKEN，無法執行 Notion 同步。"
@@ -137,7 +200,7 @@ class NotionSyncService:
         time_slot_str: str,
     ) -> dict[str, Any] | None:
         """查詢 Notion 資料庫中是否已存在相同 `發布日期` 與 `時段` 的頁面（不破壞既有歷史資料，並防止雙重建立）。"""
-        db_id = self.settings.notion_database_id.strip()
+        db_id = self._db_id()
         query_payload = {
             "filter": {
                 "and": [
@@ -179,7 +242,8 @@ class NotionSyncService:
             return False, "Notion 中尚無該時段頁面，允許執行"
 
         props = page.get("properties", {})
-        status_obj = props.get("狀態", {}).get("status") or {}
+        status_prop = props.get("狀態") or {}
+        status_obj = status_prop.get("status") or status_prop.get("select") or {}
         status_name = str(status_obj.get("name", ""))
         page_id = str(page.get("id", ""))
 
@@ -190,11 +254,32 @@ class NotionSyncService:
             )
         return False, f"Notion 頁面 ({page_id}) 目前狀態為『{status_name}』，允許更新"
 
+    def _list_child_ids(self, client: httpx.Client, page_id: str) -> list[str]:
+        """分頁讀出頁面所有第一層區塊 ID。"""
+        ids: list[str] = []
+        cursor: str | None = None
+        while True:
+            url = f"{self.NOTION_API_BASE}/blocks/{page_id}/children?page_size=100"
+            if cursor:
+                url += f"&start_cursor={cursor}"
+            resp = client.get(url, headers=self._headers(json_content=False))
+            if resp.status_code != 200:
+                raise AutotokSystemError(
+                    f"讀取 Notion 頁面內容失敗 (HTTP {resp.status_code}): {resp.text[:200]}",
+                    code="NOTION_SYNC_ERROR",
+                )
+            data = resp.json()
+            ids.extend(str(b["id"]) for b in data.get("results", []) if b.get("id"))
+            if not data.get("has_more") or not data.get("next_cursor"):
+                return ids
+            cursor = str(data["next_cursor"])
+
     def sync_post_to_notion(
         self,
         package: CarouselPostPackage,
         *,
         zh_media_dir: Path | None = None,
+        language_label: str = "發布語言",
     ) -> NotionSyncResult:
         """將通過 Quality Gate 的 6 張越南文 JPEG、6 張繁中對照 JPEG、逐頁翻譯與貼文同步至 Notion。"""
         # 1. 先確定 6 張越南文圖片通過品質驗證
@@ -202,13 +287,14 @@ class NotionSyncService:
 
         time_str, category_zh = SLOT_TO_NOTION_CATEGORY[package.slot]
         scheduled_date = package.scheduled_at_taipei[:10]
-        spec = DailySlotEditorialSpec.SPECS.get(package.slot, {})
-        core_angle = package.core_angle or str(spec.get("core_angle", "在台越南人實用生活與成長指南"))
-        cta_text = package.cta or str(spec.get("cta", "Lưu lại bài viết & theo dõi @carry.vietnam.tw!"))
+        core_angle = package.core_angle
+        cta_text = package.cta
+        label = language_label
         notion_status = POST_STATUS_TO_NOTION_STATUS.get(package.status, "圖片完成")
         total_slides = len(package.slides)
 
         with httpx.Client(transport=self._transport, timeout=60.0) as client:
+            status_kind = self._status_property_kind(client)
             # 2. 上傳 6 張越南文正式 JPEG 至 Notion 持久化空間
             vi_file_ids: list[str] = []
             for item in vi_report.items:
@@ -243,20 +329,14 @@ class NotionSyncService:
             ]
 
             properties: dict[str, Any] = {
-                "主題": {
-                    "title": [{"type": "text", "text": {"content": package.zh_tw_title}}]
-                },
-                "越南文標題": {
-                    "rich_text": [{"type": "text", "text": {"content": package.vi_title}}]
-                },
-                "狀態": {"status": {"name": notion_status}},
+                "主題": {"title": rich_text(package.zh_tw_title)},
+                "越南文標題": {"rich_text": rich_text(package.vi_title)},
+                "狀態": {status_kind: {"name": notion_status}},
                 "發布日期": {"date": {"start": scheduled_date}},
                 "時段": {"select": {"name": time_str}},
                 "分類": {"select": {"name": category_zh}},
-                "核心切角": {
-                    "rich_text": [{"type": "text", "text": {"content": core_angle}}]
-                },
-                "CTA": {"rich_text": [{"type": "text", "text": {"content": cta_text}}]},
+                "核心切角": {"rich_text": rich_text(core_angle)},
+                "CTA": {"rich_text": rich_text(cta_text)},
                 "越南文圖片": {"files": vi_files_prop},
                 "中文對照": {"checkbox": True},
             }
@@ -276,31 +356,19 @@ class NotionSyncService:
                     "object": "block",
                     "type": "callout",
                     "callout": {
-                        "icon": {"type": "emoji", "emoji": "🇻🇳"},
-                        "rich_text": [
-                            {
-                                "type": "text",
-                                "text": {
-                                    "content": (
-                                        f"Post ID: {package.post_id}｜時段: {scheduled_date} {time_str} ({category_zh})\n"
-                                        f"越南文標題: {package.vi_title}\n"
-                                        f"繁中標題: {package.zh_tw_title}"
-                                    )
-                                },
-                            }
-                        ],
+                        "icon": {"type": "emoji", "emoji": "📝"},
+                        "rich_text": rich_text(
+                            f"Post ID: {package.post_id}｜時段: {scheduled_date} {time_str} ({category_zh})\n"
+                            f"{label}標題: {package.vi_title}\n"
+                            f"繁中標題: {package.zh_tw_title}"
+                        ),
                     },
                 },
                 {
                     "object": "block",
                     "type": "heading_2",
                     "heading_2": {
-                        "rich_text": [
-                            {
-                                "type": "text",
-                                "text": {"content": "📋 TikTok 越南文貼文與 5 個 Hashtag（可直接複製）"},
-                            }
-                        ]
+                        "rich_text": rich_text(f"TikTok {label}貼文與 {len(package.hashtags)} 個 Hashtag（可直接複製）")
                     },
                 },
                 {
@@ -308,33 +376,21 @@ class NotionSyncService:
                     "type": "code",
                     "code": {
                         "language": "plain text",
-                        "rich_text": [
-                            {"type": "text", "text": {"content": full_caption_with_tags}}
-                        ],
+                        "rich_text": rich_text(full_caption_with_tags),
                     },
                 },
                 {
                     "object": "block",
                     "type": "paragraph",
                     "paragraph": {
-                        "rich_text": [
-                            {
-                                "type": "text",
-                                "text": {"content": f"繁中貼文翻譯：{package.zh_tw_caption}"},
-                            }
-                        ]
+                        "rich_text": rich_text(f"繁中貼文翻譯：{package.zh_tw_caption}")
                     },
                 },
                 {
                     "object": "block",
                     "type": "heading_2",
                     "heading_2": {
-                        "rich_text": [
-                            {
-                                "type": "text",
-                                "text": {"content": "🖼️ 六頁越南文正式輪播圖 (1080×1350) 與逐頁繁中對照"},
-                            }
-                        ]
+                        "rich_text": rich_text(f"{total_slides} 頁{label}輪播圖 (1080×1350) 與逐頁繁中對照")
                     },
                 },
             ]
@@ -345,12 +401,7 @@ class NotionSyncService:
                         "object": "block",
                         "type": "heading_3",
                         "heading_3": {
-                            "rich_text": [
-                                {
-                                    "type": "text",
-                                    "text": {"content": f"Slide {slide.index:02d} / {total_slides:02d}"},
-                                }
-                            ]
+                            "rich_text": rich_text(f"Slide {slide.index:02d} / {total_slides:02d}")
                         },
                     }
                 )
@@ -361,14 +412,7 @@ class NotionSyncService:
                         "image": {
                             "type": "file_upload",
                             "file_upload": {"id": fid},
-                            "caption": [
-                                {
-                                    "type": "text",
-                                    "text": {
-                                        "content": f"[{slide.index:02d}] {slide.zh_tw_translation}"
-                                    },
-                                }
-                            ],
+                            "caption": rich_text(f"[{slide.index:02d}] {slide.zh_tw_translation}"),
                         },
                     }
                 )
@@ -377,18 +421,11 @@ class NotionSyncService:
                         "object": "block",
                         "type": "quote",
                         "quote": {
-                            "rich_text": [
-                                {
-                                    "type": "text",
-                                    "text": {
-                                        "content": (
-                                            f"🇻🇳 越文：{slide.vi_text}\n"
-                                            f"🇹🇼 繁中：{slide.zh_tw_translation}\n"
-                                            f"🔒 SHA-256：{(slide.sha256 or '')[:16]}..."
-                                        )
-                                    },
-                                }
-                            ]
+                            "rich_text": rich_text(
+                                f"{label}：{slide.vi_text}\n"
+                                f"繁中：{slide.zh_tw_translation}\n"
+                                f"SHA-256：{(slide.sha256 or '')[:16]}..."
+                            )
                         },
                     }
                 )
@@ -400,7 +437,7 @@ class NotionSyncService:
                 time_slot_str=time_str,
             )
 
-            db_id = self.settings.notion_database_id.strip()
+            db_id = self._db_id()
             if existing_page:
                 page_id = str(existing_page["id"])
                 patch_resp = client.patch(
@@ -413,24 +450,33 @@ class NotionSyncService:
                         f"更新 Notion 頁面失敗 (HTTP {patch_resp.status_code}): {patch_resp.text[:300]}",
                         code="NOTION_SYNC_ERROR",
                     )
-                # 先清除該頁面舊有的內頁區塊（如先前測試的舊版圖片），確保內頁只保留最新生成的圖片與文案
-                old_blocks_resp = client.get(
-                    f"{self.NOTION_API_BASE}/blocks/{page_id}/children?page_size=100",
-                    headers=self._headers(json_content=False),
-                )
-                if old_blocks_resp.status_code == 200:
-                    for blk in old_blocks_resp.json().get("results", []):
-                        blk_id = blk.get("id")
-                        if blk_id:
-                            client.delete(
-                                f"{self.NOTION_API_BASE}/blocks/{blk_id}",
-                                headers=self._headers(json_content=False),
-                            )
-                client.patch(
-                    f"{self.NOTION_API_BASE}/blocks/{page_id}/children",
-                    headers=self._headers(json_content=True),
-                    json={"children": children_blocks},
-                )
+                # 先附加新版區塊並確認成功，再刪舊區塊；附加失敗時舊內容原封不動
+                old_ids = self._list_child_ids(client, page_id)
+                for i in range(0, len(children_blocks), NOTION_APPEND_BATCH):
+                    append_resp = client.patch(
+                        f"{self.NOTION_API_BASE}/blocks/{page_id}/children",
+                        headers=self._headers(json_content=True),
+                        json={"children": children_blocks[i : i + NOTION_APPEND_BATCH]},
+                    )
+                    if append_resp.status_code != 200:
+                        raise AutotokSystemError(
+                            f"附加新版內頁區塊失敗 (HTTP {append_resp.status_code}): {append_resp.text[:300]}。"
+                            "舊的內頁內容沒有被刪除。",
+                            code="NOTION_SYNC_ERROR",
+                        )
+                failed_deletes = 0
+                for blk_id in old_ids:
+                    del_resp = client.delete(
+                        f"{self.NOTION_API_BASE}/blocks/{blk_id}",
+                        headers=self._headers(json_content=False),
+                    )
+                    if del_resp.status_code != 200:
+                        failed_deletes += 1
+                if failed_deletes:
+                    raise AutotokSystemError(
+                        f"新版內容已寫入，但有 {failed_deletes} 個舊區塊刪除失敗，頁面可能出現重複內容，請到 Notion 手動清理。",
+                        code="NOTION_SYNC_ERROR",
+                    )
                 page_data = patch_resp.json()
                 action = "updated_existing"
             else:

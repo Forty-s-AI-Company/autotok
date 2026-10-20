@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, fresh, chip, empty, action_btn %}
+{% block body_attrs %}data-refresh-on-job{% endblock %}
+{% block content %}
+{% set sel = providers|selectattr('key', 'equalto', selected)|first %}
+
+<div class="panel"><div class="ph" style="flex-wrap:wrap">
+  <div class="seg" role="group" aria-label="資料來源">
+    {% for p in providers %}
+      {% if p.ok %}
+        <a class="segl" href="/research?source={{ p.key }}&fit={{ fit_min }}&ev={{ ev }}" aria-pressed="{{ 'true' if p.key == selected else 'false' }}">{{ p.label }}</a>
+      {% else %}
+        <span class="segl" aria-disabled="true" title="{{ p.reason }}">{{ p.label }}</span>
+      {% endif %}
+    {% endfor %}
+  </div>
+  <span id="resFresh">
+    {% if last %}{{ fresh(last.finished_at, tz, source=last.summary) }}{% else %}{{ fresh(None, tz) }}{% endif %}
+  </span>
+  <span class="sp"></span>
+  {% if selected in ('web', 'thirdparty', 'mock') %}
+    {{ action_btn('重新研究', '/research/run', busy='研究中…', kind='primary', vals={'source': selected}, icon_name='i-refresh', disabled=not sel.ok, title=sel.reason, include='#resBrief') }}
+  {% endif %}
+</div>
+<div class="pb" style="border-top:1px solid var(--border)">
+  <div class="field" style="margin:0">
+    <label for="resBrief">這次想研究什麼</label>
+    <textarea id="resBrief" name="brief" rows="3" placeholder="例如：想做在台灣的越南人市場，靠網路行銷吸引他們按讚、留言、分享；內容也要有美食、文化、創業、想家這類能引起共鳴的主題；有些要有 CTA，有些可以不用。">{{ brief }}</textarea>
+  </div>
+  <div class="row-flex" style="margin-top:8px">
+    {{ action_btn('存為這個帳號的預設', '/research/brief/save', busy='儲存中…', kind='sm', vals=None, include='#resBrief') }}
+    <a class="btn sm ghost" href="/settings#market" data-jump="market">到市場設定編輯</a>
+  </div>
+</div>
+{% if not sel.ok %}
+  <div class="pb small"><span class="err-text">{{ sel.label }}目前不能使用。</span> {{ sel.reason }}</div>
+{% endif %}
+{% if last_failed %}
+  <div class="pb small"><span class="err-text">上次研究失敗：</span>{{ last_failed.error }}</div>
+{% endif %}
+</div>
+
+<details class="panel" id="import" data-key="import">
+  <summary><h2>匯入案例</h2><span class="sp"></span>{{ icon('i-chev', 'chev') }}</summary>
+  <div class="pb">
+    <form class="stack" hx-post="/research/import" hx-swap="none" hx-encoding="multipart/form-data">
+      <div class="field" style="margin:0">
+        <label for="impText">內容（一行一個網址，或含標題列的 CSV／JSON）</label>
+        <textarea id="impText" name="text" rows="5" placeholder="https://www.tiktok.com/@name/photo/123&#10;或 CSV：url,title,views,likes,comments,shares"></textarea>
+      </div>
+      <div class="row-flex">
+        <input type="file" name="file" accept=".csv,.json,.txt" aria-label="選擇檔案">
+        <button class="btn primary" type="submit" data-busy="匯入中…"><span class="bl">匯入</span></button>
+      </div>
+    </form>
+  </div>
+</details>
+
+<div class="panel">
+  <div class="ph" style="flex-wrap:wrap;border-bottom:1px solid var(--border)">
+    <h2>研究案例</h2><span class="badge-n">{{ rows|length }} / {{ total_cases }}</span>
+    <span class="sp"></span>
+    <form method="get" action="/research" class="row-flex">
+      <input type="hidden" name="source" value="{{ selected }}">
+      <label class="small muted" for="fitSel">適配度</label>
+      <select id="fitSel" name="fit" onchange="this.form.submit()">{% for n in fit_options %}<option value="{{ n }}"{% if n == fit_min %} selected{% endif %}>{{ '全部' if n == 0 else n ~ ' 以上' }}</option>{% endfor %}</select>
+      <label class="small muted" for="evSel">證據</label>
+      <select id="evSel" name="ev" onchange="this.form.submit()">{% for k, label in ev_options.items() %}<option value="{{ k }}"{% if k == ev %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+    </form>
+    {{ action_btn('重新計算適配度', '/research/refit', busy='計算中…', kind='ghost sm', title='修改市場設定或關鍵字後使用') }}
+  </div>
+  {% if rows %}
+  <div class="tbl"><table>
+    <thead><tr><th>案例</th><th class="num">觀看</th><th class="num">互動率</th><th>證據</th><th>適配度</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}{% set c = r.c %}
+      <tr class="clickable" data-toggle-next>
+        <td class="title-cell"><b lang="{{ market.target_language }}">{{ r.title }}</b>
+          <span class="small muted">{% if c.title_zh %}{{ c.title_zh }} · {% endif %}{{ c.creator if c.creator != 'unknown' else r.host }}{% if c.published_at %} · {{ c.published_at[:10] }}{% endif %}</span>
+          {% if r.fit.flag %}<div style="margin-top:2px">{{ chip(r.fit.flag, 'warn') }}</div>{% endif %}</td>
+        <td class="num">{{ '{:,}'.format(c.views) if c.views is not none else '—' }}</td>
+        <td class="num">{{ r.rate }}{% if r.rate_note %}<div class="small muted" style="font-family:var(--sans)">{{ r.rate_note }}</div>{% endif %}</td>
+        <td>{{ chip(r.ev_label, r.ev_kind) }}</td>
+        <td><div class="fit {{ 'low' if r.fit.score < 60 else '' }}"><span class="mono" style="width:30px;text-align:right">{{ '%.0f'|format(r.fit.score) }}</span><i style="--v:{{ r.fit.score }}%"></i></div></td>
+        <td class="nowrap">{{ action_btn('送去製作', '/research/send', busy='建立中…', kind='sm', vals={'case_id': c.case_id}) }}</td>
+      </tr>
+      <tr class="detail" hidden><td colspan="6" style="background:var(--surface-2)">
+        <div class="small stack" style="gap:6px">
+          <div><b style="font-weight:500">適配理由</b>　{{ r.fit.reason }}</div>
+          <div class="muted">建議時段：{{ r.slot_time }} {{ r.slot_name }}{% if c.missing_fields %} · 缺失欄位：{{ c.missing_fields|join('、') }}{% endif %}</div>
+          {% if c.hook_notes %}<div><b style="font-weight:500">結構筆記</b>　{{ c.hook_notes }}</div>{% endif %}
+          <div><a href="{{ c.source_url }}" target="_blank" rel="noopener">{{ icon('i-ext') }} 開啟來源</a></div>
+        </div>
+      </td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% elif total_cases %}
+    {% call empty('沒有符合條件的案例') %}<a class="btn" href="/research?source={{ selected }}&fit=0&ev={{ ev }}">顯示全部 {{ total_cases }} 筆</a>{% endcall %}
+  {% else %}
+    {% call empty('還沒有研究資料') %}
+      {% if not sel.ok %}<div class="small">目前選的來源不能使用：{{ sel.reason }}</div>{% endif %}
+    {% endcall %}
+  {% endif %}
+</div>
+{% if not keywords %}
+{% endif %}
+<script>
+  document.addEventListener('click', function (e) {
+    var tr = e.target.closest('tr[data-toggle-next]'); if (!tr || e.target.closest('button,a')) return;
+    var d = tr.nextElementSibling; if (d) d.hidden = !d.hidden;
+  });
+</script>
+{% endblock %}

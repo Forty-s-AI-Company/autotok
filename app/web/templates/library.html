@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, fresh, chip, empty, action_btn %}
+      {% macro gallery(urls, pane, hidden=False) %}
+<div class="gallery" data-pane="{{ pane }}"{% if hidden %} hidden{% endif %}>
+  {% if urls %}
+  <div class="swiper"><div class="swiper-wrapper">{% for u in urls %}<div class="swiper-slide"><a href="{{ u }}" data-lb aria-label="放大第 {{ loop.index }} 張"><img src="{{ u }}" alt="第 {{ loop.index }} 張" loading="lazy"></a></div>{% endfor %}</div></div>
+  <button type="button" class="g-nav g-prev" aria-label="上一頁">{{ icon('i-chev') }}</button><button type="button" class="g-nav g-next" aria-label="下一頁">{{ icon('i-chev') }}</button>
+  {% else %}<span class="muted small">沒有找到圖片檔</span>{% endif %}
+</div>
+{% endmacro %}
+{% block top_actions %}
+<div class="seg" role="group" aria-label="狀態篩選">
+  <a href="/library" class="segl" aria-pressed="{{ 'true' if not status else 'false' }}">全部 {{ total }}</a>
+  {% for name, n in counts.items() %}<a href="/library?status={{ name }}" class="segl" aria-pressed="{{ 'true' if status == name else 'false' }}">{{ name }} {{ n }}</a>{% endfor %}
+</div>
+{% endblock %}
+{% block content %}
+{% if not views %}
+  <div class="panel">{% call empty('這裡還沒有貼文') %}<a class="btn" href="/studio">前往製作</a>{% endcall %}</div>
+{% endif %}
+{% for v in views %}
+{% set p = v.post %}
+<details class="panel post" id="{{ p.post_id }}"{% if views|length == 1 %} open{% endif %}>
+  <summary>
+    <div style="min-width:0;flex:1">
+      <b style="font-weight:500">{{ p.zh_tw_title }}</b>
+      <div class="small muted">{{ p.scheduled_at_taipei|replace('T',' ')|truncate(16, True, '') }} · {{ p.slide_count }} 張 · {{ p.post_id }}</div>
+    </div>
+    {{ chip(v.status_label, v.status_kind) }}{% if p.is_mock %}{{ chip('模擬', 'mock') }}{% endif %}
+    {{ icon('i-chev', 'chev') }}
+  </summary>
+  <div class="pb stack">
+    <div>
+      <div class="tabs" data-tabs>
+        <button type="button" aria-selected="true" data-tab="zh-{{ loop.index }}">繁體中文</button>
+        <button type="button" aria-selected="false" data-tab="tg-{{ loop.index }}">{{ market.target_language_label }}</button>
+      </div>
+      {% set zi = loop.index %}
+      {{ gallery(v.zh_thumbs, 'zh-' ~ zi) }}
+      {{ gallery(v.target_thumbs, 'tg-' ~ zi, True) }}
+    </div>
+    <div class="row-flex"><a class="btn" href="/studio?post={{ p.post_id }}">到製作頁審稿</a> {{ action_btn('匯出發布包', '/library/export', busy='匯出中…', icon_name='i-ext', vals={'post_id': p.post_id}, title='把圖片與貼文文字存到本機資料夾，不會對 TikTok 發出請求') }}</div>
+    <dl class="kv-tight">
+      <dt>核心切角</dt><dd>{{ p.core_angle or '—' }}</dd>
+      <dt>CTA</dt><dd>{{ p.cta or '—' }}</dd>
+      <dt>標題</dt><dd lang="{{ market.target_language }}">{{ p.vi_title }}</dd>
+      <dt>貼文</dt><dd lang="{{ market.target_language }}">{{ p.vi_caption }}<div class="small muted" style="margin-top:4px">{{ p.hashtags|join(' ') }}</div></dd>
+      <dt>中文對照</dt><dd>{{ p.zh_tw_caption }}</dd>
+    </dl>
+  </div>
+</details>
+{% endfor %}
+{% endblock %}

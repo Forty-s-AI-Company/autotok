@@ -1,6 +1,6 @@
 # 市場研究結構、指標口徑與 Notion Schema 映射規範（docs/RESEARCH_SCHEMA.md）
 
-> 依據 [`MASTER_SPEC.md`](../MASTER_SPEC.md) 第 4, 5, 7, 10, 11 節建立，對應 Phase 2 實作。
+> 依據 [`MASTER_SPEC.md`](MASTER_SPEC.md) 第 4, 5, 7, 10, 11 節建立，對應 Phase 2 實作。
 
 ---
 

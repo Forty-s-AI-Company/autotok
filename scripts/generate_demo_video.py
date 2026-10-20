@@ -12,11 +12,11 @@
   5. 發布至 @carry.vietnam.tw 端到端完成展示
 """
 
-import math
 import subprocess
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+
 import imageio_ffmpeg
+from PIL import Image, ImageDraw, ImageFont
 
 WIDTH = 1920
 HEIGHT = 1080

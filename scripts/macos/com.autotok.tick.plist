@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 複製到 ~/Library/LaunchAgents/，把 /PATH/TO/autotok 換成專案路徑後：launchctl load ~/Library/LaunchAgents/com.autotok.tick.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.autotok.tick</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/zsh</string><string>-lc</string><string>cd /PATH/TO/autotok &amp;&amp; uv run python -m app scheduler tick</string></array>
+  <key>StartInterval</key><integer>600</integer>
+  <key>StandardOutPath</key><string>/PATH/TO/autotok/logs/scheduler.log</string>
+  <key>StandardErrorPath</key><string>/PATH/TO/autotok/logs/scheduler.log</string>
+</dict>
+</plist>

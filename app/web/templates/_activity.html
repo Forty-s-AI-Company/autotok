@@ -1,0 +1,6 @@
+{# 背景工作狀態。每 3 秒向 /activity 取得最新片段；工作結束時伺服器回傳 jobFinished 事件。 #}
+<div id="activity" class="activity" hx-get="/activity?seen={{ request.app.state.jobs.last_finished_id }}" hx-trigger="every 3s" hx-swap="outerHTML">
+  {% if job %}
+    <span class="spinner"></span><span class="activity-text"><b>{{ job.label }}</b>{% if job.message %} · {{ job.message }}{% endif %}</span>
+  {% endif %}
+</div>

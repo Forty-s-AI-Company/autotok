@@ -53,14 +53,33 @@ class AppSettings(BaseSettings):
         default="", alias="TIKTOK_VERIFIED_IMAGE_URL_PREFIX"
     )
     tiktok_app_audited: bool = Field(default=False, alias="TIKTOK_APP_AUDITED")
+    # 圖片託管：發布時把圖片複製到這個資料夾，由使用者負責把它發佈到已驗證的網域（對應 TIKTOK_VERIFIED_IMAGE_URL_PREFIX）
+    image_host_sync_dir: str = Field(default="", alias="IMAGE_HOST_SYNC_DIR")
+    # 需與 TikTok Developer Portal 登記的 Redirect URI 完全一致（localhost 是否被接受尚未實測）
+    tiktok_redirect_uri: str = Field(
+        default="http://127.0.0.1:8765/tiktok/oauth/callback", alias="TIKTOK_REDIRECT_URI"
+    )
 
     # ChatGPT / Codex CLI 模型設定（預設使用高性價比主力模型 gpt-6-sol）
     codex_model: str = Field(default="gpt-6-sol", alias="CODEX_MODEL")
+    codex_bin: str = Field(default="", alias="CODEX_BIN")
+    # 生圖時 Codex 的沙盒：workspace-write 只能寫輸出資料夾；danger-full-access 擁有完整檔案與網路權限
+    codex_image_sandbox: str = Field(default="workspace-write", alias="CODEX_IMAGE_SANDBOX")
+
+    # 研究 provider（皆為選配；沒有金鑰時對應來源在介面顯示停用）
+    anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    anthropic_model: str = Field(default="claude-sonnet-5-5", alias="ANTHROPIC_MODEL")
+    apify_token: str = Field(default="", alias="APIFY_TOKEN")
 
     # Notion (Phase 2/4 整合預留)
     notion_token: str = Field(default="", alias="NOTION_TOKEN")
     notion_database_id: str = Field(
         default="f1bc34396f154e62bca90c9deea19d7a", alias="NOTION_DATABASE_ID"
+    )
+    notion_client_id: str = Field(default="", alias="NOTION_CLIENT_ID")
+    notion_client_secret: str = Field(default="", alias="NOTION_CLIENT_SECRET")
+    notion_redirect_uri: str = Field(
+        default="http://127.0.0.1:8765/notion/oauth/callback", alias="NOTION_REDIRECT_URI"
     )
     notion_data_source_id: str = Field(
         default="4d575a73-4f98-4ff6-b3f8-da68c40c7125", alias="NOTION_DATA_SOURCE_ID"
@@ -80,5 +99,9 @@ class AppSettings(BaseSettings):
             "tiktok_verified_image_url_prefix": self.tiktok_verified_image_url_prefix,
             "tiktok_app_audited": self.tiktok_app_audited,
             "codex_model": self.codex_model,
+            "codex_bin": self.codex_bin,
+            "has_anthropic_api_key": bool(self.anthropic_api_key.strip()),
+            "has_apify_token": bool(self.apify_token.strip()),
             "has_notion_token": bool(self.notion_token.strip()),
+            "has_notion_oauth": bool(self.notion_client_id.strip() and self.notion_client_secret.strip()),
         }
