@@ -10,7 +10,11 @@ import pytest
 
 from app.config import AppSettings
 from app.errors import BlockedNeedsAuthError
-from app.gui import render_dashboard_html
+from app.gui import (
+    _run_research_and_analytics_job,
+    get_task_state_snapshot,
+    render_dashboard_html,
+)
 from app.models import ContentSlot
 from app.notion_sync import NotionSyncService
 from app.production import produce_carousel_with_qa_retry
@@ -135,4 +139,12 @@ def test_gui_dashboard_html_renders_without_leaking_secrets(tmp_path: Path) -> N
 
     assert "Carry | Đài Loan × Việt Nam" in html_out
     assert "post-2026-10-21-0700" in html_out
+    assert "核心切角" in html_out
+    assert "CTA 行動呼籲" in html_out
     assert "ntn_super_secret_should_not_appear_in_html" not in html_out
+
+    # 測試一鍵更新市場研究與成效分析背景函式不會拋出參數錯誤
+    _run_research_and_analytics_job(tmp_path, settings)
+    snap = get_task_state_snapshot()
+    assert snap["status"] == "completed"
+    assert "✅ 已成功更新" in str(snap["message"])

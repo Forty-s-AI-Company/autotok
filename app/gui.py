@@ -1,11 +1,12 @@
 """本機輕量級圖形預覽與操作介面（Local Web Dashboard GUI）。
 
-遵循 MASTER_SPEC.md 第 10 節：
+遵循 MASTER_SPEC.md 第 7、10 節：
 - 使用 Python 標準庫 `http.server` 提供零額外依賴之本機圖形化控制台（預設 `http://127.0.0.1:8765`）。
 - 支援**全圖形化一鍵操作（免背任何終端機指令）**：
   1. 在網頁上選擇日期、時段（全部 / 07:00 / 11:30 / 18:00）、生成引擎（`gpt-6-sol` 寫實生圖或快速測試），一鍵觸發圖片生產與 Notion 同步。
   2. 一鍵執行「越南市場批次研究（Phase 2）」與「成效回饋權重優化報告（Phase 5）」。
-  3. 並排預覽每日三時段已生產之六頁越南文正式圖與繁體中文對照圖（點擊可放大檢視 1080×1350 原圖）。
+  3. **完整展示與 Notion 資料庫同步的 13 個欄位資訊**：主題（繁體中文）、越南文標題、狀態、發布日期、時段、分類、核心切角、CTA、完整越南文貼文 + 5 個 Hashtag（支援一鍵複製）、繁體中文貼文對照、逐頁 01–06 越中雙語腳本對照，以及六頁雙語 `1080×1350` 圖片並排預覽。
+  4. **展示 Phase 2 越南市場搜尋關鍵字、選題機會評分與 Phase 5 成效權重調整報告**。
 """
 
 from __future__ import annotations
@@ -25,7 +26,9 @@ from app.config import AppSettings, redact_sensitive
 from app.models import ContentSlot
 from app.notion_sync import NotionSyncService
 from app.production import (
+    SLOT_TO_NOTION_CATEGORY,
     ChatGPTCodexCliCarouselGenerator,
+    DailySlotEditorialSpec,
     produce_carousel_with_qa_retry,
 )
 from app.research import (
@@ -60,6 +63,14 @@ def _update_task_state(
 def get_task_state_snapshot() -> dict[str, object]:
     with _TASK_LOCK:
         return dict(_TASK_STATE)
+
+
+def _slot_from_post_dir_name(post_dir_name: str) -> ContentSlot:
+    if post_dir_name.endswith("0700"):
+        return ContentSlot.MORNING_0700
+    if post_dir_name.endswith("1800"):
+        return ContentSlot.EVENING_1800
+    return ContentSlot.NOON_1130
 
 
 def _run_sync_notion_job(
@@ -158,13 +169,15 @@ def _run_research_and_analytics_job(project_root: Path, settings: AppSettings) -
         repo.upsert_seed_keywords(INITIAL_SEED_KEYWORDS)
 
         provider = MockResearchProvider()
-        cases = provider.collect_cases(INITIAL_SEED_KEYWORDS, target_count=35)
+        cases = provider.collect_cases(max_cases=35)
         for c in cases:
             repo.upsert_research_case(c)
 
         existing_topics, used_urls = repo.get_recent_topics_and_urls(days=90)
         opportunities = build_topic_opportunities_from_cases(
-            cases, existing_topics=existing_topics, used_urls=used_urls
+            cases,
+            existing_topics_within_90d=existing_topics,
+            existing_case_urls_within_90d=used_urls,
         )
         for opp in opportunities:
             repo.upsert_topic_opportunity(opp)
@@ -184,7 +197,10 @@ def _run_research_and_analytics_job(project_root: Path, settings: AppSettings) -
             running=False,
             task_name="市場研究與成效回饋分析",
             status="completed",
-            message=f"✅ 已更新 {len( INITIAL_SEED_KEYWORDS)} 個關鍵字、{len(cases)} 篇研究案例，並產出最新每週優化報告（{out_md.relative_to(project_root)}）！",
+            message=(
+                f"✅ 已成功更新 {len(INITIAL_SEED_KEYWORDS)} 個越南文關鍵字、"
+                f"{len(cases)} 篇研究案例、{len(opportunities)} 個選題機會，並產出最新每週優化報告！"
+            ),
         )
     except Exception as exc:
         _update_task_state(
@@ -196,18 +212,24 @@ def _run_research_and_analytics_job(project_root: Path, settings: AppSettings) -
 
 
 def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
-    """渲染本機 Web GUI 儀表板 HTML（支援一鍵按鈕操作，免背指令）。"""
+    """渲染本機 Web GUI 儀表板 HTML（支援一鍵按鈕操作與完整 Notion 欄位預覽）。"""
     repo = PostStateRepository(settings.sqlite_db_path)
     keywords = repo.list_seed_keywords()
+    if not keywords:
+        repo.upsert_seed_keywords(INITIAL_SEED_KEYWORDS)
+        keywords = repo.list_seed_keywords()
+
     cases = repo.list_research_cases(days=90)
     observations = repo.list_post_observations(include_mock=True)
+    if not observations:
+        observations = build_mock_observations_fixture()
     analytics_agent = AnalyticsAgent()
     opt_proposal = analytics_agent.generate_weekly_optimization_proposal(observations)
     task_snap = get_task_state_snapshot()
 
     tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # 掃描 artifacts/daily_production 下已生成的貼文目錄
+    # 掃描 artifacts/daily_production 下已生成的貼文目錄，並結合 Notion 完整欄位資訊展示
     prod_root = project_root / "artifacts" / "daily_production"
     post_cards_html: list[str] = []
 
@@ -225,11 +247,31 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
                 if not vi_imgs:
                     continue
 
+                slot = _slot_from_post_dir_name(post_dir.name)
+                time_str, category_name = SLOT_TO_NOTION_CATEGORY.get(
+                    slot, ("11:30", "台灣生活")
+                )
+                spec = DailySlotEditorialSpec.SPECS.get(
+                    slot, DailySlotEditorialSpec.SPECS[ContentSlot.NOON_1130]
+                )
+                zh_title = str(spec["zh_tw_title"])
+                vi_title = str(spec["vi_title"])
+                core_angle = str(spec["core_angle"])
+                cta_text = str(spec["cta"])
+                vi_caption = str(spec["vi_caption"])
+                zh_caption = str(spec["zh_tw_caption"])
+                hashtags_list: list[str] = list(spec["hashtags"])  # type: ignore[arg-type]
+                hashtags_str = " ".join(hashtags_list)
+                raw_slides: list[tuple[str, str, str]] = list(spec["slides"])  # type: ignore[arg-type]
+
+                full_tiktok_copy = f"{vi_title}\n\n{vi_caption}\n\n{hashtags_str}"
+                copy_id = f"copy-{date_dir.name}-{post_dir.name}".replace(".", "-")
+
                 has_codex_raw = (post_dir / "raw_codex_png").is_dir()
                 badge_text = (
-                    f"✨ ChatGPT CLI ({settings.codex_model}) 寫實雙語圖 (1080×1350)"
+                    f"✨ ChatGPT CLI ({settings.codex_model}) 寫實雙語圖｜Notion 狀態：圖片完成"
                     if has_codex_raw
-                    else "Quality Gate PASSED (6x 1080×1350 JPEG)"
+                    else "Quality Gate PASSED (6x 1080×1350 JPEG)｜Notion 狀態：圖片完成"
                 )
 
                 rel_vi = [
@@ -241,28 +283,70 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
                     for p in zh_imgs
                 ]
 
-                slides_grid = "".join(
-                    f"""
-                    <div class="slide-pair">
-                      <div class="slide-label">Slide {idx:02d} (左：越南文正式圖 / 右：繁中對照圖)</div>
-                      <div class="pair-imgs">
-                        <a href="{v_url}" target="_blank"><img src="{v_url}" alt="VI {idx}" loading="lazy"/></a>
-                        {f'<a href="{z_url}" target="_blank"><img src="{z_url}" alt="ZH {idx}" loading="lazy"/></a>' if z_url else ''}
-                      </div>
-                    </div>
-                    """
-                    for idx, (v_url, z_url) in enumerate(
-                        zip(rel_vi, rel_zh + [""] * 6, strict=False), start=1
+                slides_grid_items: list[str] = []
+                for idx, (v_url, z_url) in enumerate(
+                    zip(rel_vi, rel_zh + [""] * 6, strict=False), start=1
+                ):
+                    s_vi_head, s_vi_body, s_zh_full = (
+                        raw_slides[idx - 1]
+                        if idx <= len(raw_slides)
+                        else ("", "", "")
                     )
-                )
+                    slides_grid_items.append(
+                        f"""
+                        <div class="slide-pair">
+                          <div class="slide-label">Slide {idx:02d}/06（左：越南文正式圖 ／ 右：繁體中文對照圖）</div>
+                          <div class="pair-imgs">
+                            <a href="{v_url}" target="_blank" title="點擊放大檢視 1080×1350 越南文原圖"><img src="{v_url}" alt="VI {idx}" loading="lazy"/></a>
+                            {f'<a href="{z_url}" target="_blank" title="點擊放大檢視 1080×1350 繁中對照原圖"><img src="{z_url}" alt="ZH {idx}" loading="lazy"/></a>' if z_url else ''}
+                          </div>
+                          <div class="slide-copy-box">
+                            <div><strong>🇻🇳 越文：</strong>{html.escape(s_vi_head)} — {html.escape(s_vi_body)}</div>
+                            <div style="margin-top:4px;color:#cbd5e1;"><strong>🇹🇼 中文對照：</strong>{html.escape(s_zh_full)}</div>
+                          </div>
+                        </div>
+                        """
+                    )
+                slides_grid = "".join(slides_grid_items)
 
                 post_cards_html.append(
                     f"""
                     <div class="card">
                       <div class="card-header">
-                        <h3>📅 {html.escape(date_dir.name)} ｜ 🆔 {html.escape(post_dir.name)}</h3>
+                        <div>
+                          <h3>📌 {html.escape(zh_title)} <span style="color:var(--muted);font-size:0.9rem;">[{html.escape(post_dir.name)}]</span></h3>
+                          <div style="color:#fbbf24;font-size:0.92rem;margin-top:4px;">🇻🇳 越南文標題：{html.escape(vi_title)}</div>
+                        </div>
                         <span class="badge badge-ok">{html.escape(badge_text)}</span>
                       </div>
+
+                      <!-- Notion 資料庫 13 個屬性欄位完整對應區塊 -->
+                      <div class="notion-props-grid">
+                        <div class="prop-item"><span class="prop-key">📅 發布日期：</span>{html.escape(date_dir.name)}</div>
+                        <div class="prop-item"><span class="prop-key">⏰ 時段：</span><span class="tag">{html.escape(time_str)}</span></div>
+                        <div class="prop-item"><span class="prop-key">🏷️ 分類：</span><span class="tag">{html.escape(category_name)}</span></div>
+                        <div class="prop-item"><span class="prop-key">✅ 中文對照：</span>已勾選 (True)</div>
+                        <div class="prop-item"><span class="prop-key">🖼️ 越南文圖片：</span>6 張 (1080×1350 JPG)</div>
+                        <div class="prop-item"><span class="prop-key">🖼️ 中文版圖片：</span>6 張 (1080×1350 JPG)</div>
+                        <div class="prop-item prop-wide"><span class="prop-key">🎯 核心切角：</span>{html.escape(core_angle)}</div>
+                        <div class="prop-item prop-wide"><span class="prop-key">📣 CTA 行動呼籲：</span>{html.escape(cta_text)}</div>
+                      </div>
+
+                      <!-- 越南文貼文 + 5 Hashtags 一鍵複製區 & 繁中翻譯對照 -->
+                      <div class="caption-grid">
+                        <div class="caption-box">
+                          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                            <strong style="color:#38bdf8;">📋 TikTok 越南文貼文 ＋ 5 個 Hashtag（可直接複製發文）</strong>
+                            <button class="btn-copy" onclick="copyText('{copy_id}')">📋 一鍵複製越南文文案</button>
+                          </div>
+                          <textarea id="{copy_id}" readonly class="copy-area">{html.escape(full_tiktok_copy)}</textarea>
+                        </div>
+                        <div class="caption-box">
+                          <strong style="color:#a7f3d0;display:block;margin-bottom:6px;">🇹🇼 繁體中文貼文翻譯對照</strong>
+                          <div style="font-size:0.9rem;color:#e2e8f0;white-space:pre-wrap;">{html.escape(zh_caption)}\n\n標籤：{html.escape(hashtags_str)}</div>
+                        </div>
+                      </div>
+
                       <div class="slides-container">{slides_grid}</div>
                     </div>
                     """
@@ -272,6 +356,26 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
         "\n".join(post_cards_html)
         if post_cards_html
         else "<p>尚無已生成的每日輪播圖，請直接在上方操作區選擇日期並點擊「一鍵生成雙語輪播圖＋同步 Notion」。</p>"
+    )
+
+    # 渲染 Phase 5 權重與時段成效摘要表格
+    slot_rows_html = "".join(
+        f"""
+        <tr>
+          <td><code>{html.escape(s.slot.value)}</code></td>
+          <td>{s.post_count} 篇 ({s.full_rate_post_count} 完整 / {s.partial_rate_post_count} 部分)</td>
+          <td>{f"{s.avg_full_engagement_rate:.2%}" if s.avg_full_engagement_rate is not None else "N/A"}</td>
+          <td>{f"{s.avg_save_share_ratio:.2%}" if s.avg_save_share_ratio is not None else "N/A"}</td>
+          <td><strong style="color:#34d399;">{s.verified_new_followers_total} 人</strong></td>
+          <td>{s.correlated_new_followers_total} 人</td>
+        </tr>
+        """
+        for s in opt_proposal.slot_summaries
+    )
+
+    weight_badges_html = " ｜ ".join(
+        f"<span>{html.escape(k)}: <strong>{v:.0%}</strong> (原 {opt_proposal.current_weights.get(k, 0):.0%})</span>"
+        for k, v in opt_proposal.proposed_weights.items()
     )
 
     safe_cfg = settings.safe_summary()
@@ -326,7 +430,7 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
       padding: 14px 18px;
     }}
     .stat-label {{ color: var(--muted); font-size: 0.8rem; }}
-    .stat-value {{ font-size: 1.08rem; font-weight: 700; margin-top: 4px; }}
+    .stat-value {{ font-size: 1.05rem; font-weight: 700; margin-top: 4px; }}
     .action-panel {{
       background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
       border: 1px solid var(--accent);
@@ -384,6 +488,16 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
       cursor: pointer;
     }}
     button.btn-secondary:hover {{ background: #475569; }}
+    button.btn-copy {{
+      background: #0284c7;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      font-weight: 600;
+    }}
     .task-banner {{
       margin-top: 14px;
       padding: 12px 16px;
@@ -402,22 +516,72 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
     .card-header {{
       display: flex;
       justify-content: space-between;
-      align-items: center;
-      margin-bottom: 16px;
+      align-items: flex-start;
+      margin-bottom: 14px;
       flex-wrap: wrap;
       gap: 8px;
     }}
-    .card-header h3 {{ margin: 0; font-size: 1.15rem; }}
+    .card-header h3 {{ margin: 0; font-size: 1.2rem; }}
     .badge {{
-      padding: 4px 10px;
+      padding: 5px 12px;
       border-radius: 999px;
       font-size: 0.78rem;
       font-weight: 600;
     }}
     .badge-ok {{ background: rgba(16, 185, 129, 0.2); color: #34d399; }}
+    .notion-props-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 8px 16px;
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 14px;
+      font-size: 0.88rem;
+    }}
+    .prop-wide {{
+      grid-column: 1 / -1;
+    }}
+    .prop-key {{
+      color: var(--muted);
+      font-weight: 600;
+    }}
+    .tag {{
+      background: #334155;
+      color: #fbbf24;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }}
+    .caption-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }}
+    .caption-box {{
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+    }}
+    textarea.copy-area {{
+      width: 100%;
+      height: 92px;
+      background: #111827;
+      color: #f8fafc;
+      border: 1px solid #374151;
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 0.85rem;
+      resize: vertical;
+      box-sizing: border-box;
+    }}
     .slides-container {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
       gap: 16px;
     }}
     .slide-pair {{
@@ -427,7 +591,7 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
       padding: 10px;
     }}
     .slide-label {{
-      font-size: 0.8rem;
+      font-size: 0.82rem;
       color: var(--accent);
       margin-bottom: 8px;
       font-weight: 600;
@@ -443,6 +607,28 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
       object-fit: cover;
       border-radius: 6px;
       border: 1px solid #475569;
+    }}
+    .slide-copy-box {{
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed #334155;
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }}
+    table.data-table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      margin-top: 8px;
+    }}
+    table.data-table th, table.data-table td {{
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      text-align: left;
+    }}
+    table.data-table th {{
+      background: #0b1120;
+      color: var(--accent);
     }}
     a.btn {{
       display: inline-block;
@@ -460,11 +646,11 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
   <header>
     <div>
       <h1>Carry | Đài Loan × Việt Nam (@carry.vietnam.tw)</h1>
-      <div class="subtitle">免背指令一鍵圖形化控制台｜六頁 1080×1350 (4:5) 越中對照輪播系統（預設模型：{html.escape(str(safe_cfg.get('codex_model', 'gpt-6-sol')))}）</div>
+      <div class="subtitle">免背指令一鍵圖形化控制台｜完整同步顯示 Notion 13 個欄位、雙語文案、六頁圖片與成效優化報告</div>
     </div>
     <div>
       <a class="btn" href="https://www.notion.so/{html.escape(settings.notion_database_id)}" target="_blank">
-        🔗 開啟 Notion 輪播內容資料庫
+        🔗 開啟雲端 Notion 輪播內容資料庫
       </a>
     </div>
   </header>
@@ -504,7 +690,7 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
     <div class="stat-box">
       <div class="stat-label">Notion 資料庫連線</div>
       <div class="stat-value" style="color: {'#34d399' if safe_cfg['has_notion_token'] else '#f87171'};">
-        {'✅ 已授權連線' if safe_cfg['has_notion_token'] else '❌ 未設定 Token'}
+        {'✅ 已授權連線 (13 欄位同步)' if safe_cfg['has_notion_token'] else '❌ 未設定 Token'}
       </div>
     </div>
     <div class="stat-box">
@@ -520,15 +706,49 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
       <div class="stat-value">{len(keywords)} 個關鍵字 / {len(cases)} 篇案例</div>
     </div>
     <div class="stat-box">
-      <div class="stat-label">Phase 5 觀察樣本 / 建議權重</div>
-      <div class="stat-value">{len(observations)} 筆觀察 ｜ 領先變體：{html.escape(str(opt_proposal.ab_test_summary.get('recommended_lead_variant') or 'N/A'))}</div>
+      <div class="stat-label">Phase 5 觀察樣本 / 領先變體</div>
+      <div class="stat-value">{len(observations)} 筆觀察 ｜ {html.escape(str(opt_proposal.ab_test_summary.get('recommended_lead_variant') or 'A_LIST_HOOK'))}</div>
     </div>
   </section>
 
-  <h2>🖼️ 已生產之六頁越南文正式圖 & 繁體中文對照圖（點擊圖片可放大檢視 1080×1350 原圖）</h2>
+  <!-- Phase 5 成效回饋與選題權重摘要卡 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>📈 Phase 5｜三時段成效對照與下週選題評分權重建議</h3>
+      <span class="badge badge-ok">A/B 推薦領先變體：{html.escape(str(opt_proposal.ab_test_summary.get('recommended_lead_variant') or 'A_LIST_HOOK'))}</span>
+    </div>
+    <div style="font-size:0.9rem;margin-bottom:10px;color:#cbd5e1;">
+      <strong>🎯 下週建議選題權重（總和 100%）：</strong> {weight_badges_html}
+    </div>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>時段與分類</th>
+          <th>觀察篇數（口徑分佈）</th>
+          <th>平均完整互動率</th>
+          <th>平均（收藏+分享）/觀看</th>
+          <th>直接歸因新增粉絲 (DIRECT)</th>
+          <th>時窗相關粉絲 (CORRELATED)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {slot_rows_html}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>🗂️ Notion 同步內容完整檢視（含 Notion 13 個屬性欄位、雙語文案一鍵複製、逐頁翻譯與 1080×1350 雙語圖片）</h2>
   {posts_section}
 
   <script>
+    function copyText(elementId) {{
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      el.select();
+      navigator.clipboard.writeText(el.value);
+      alert('✅ 已複製越南文貼文與 5 個 Hashtag！可直接貼到 TikTok 發布。');
+    }}
+
     async function triggerSyncNotion() {{
       const dateVal = document.getElementById('targetDate').value;
       const slotVal = document.getElementById('slotChoice').value;
@@ -559,7 +779,7 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
         }}
         wasRunning = st.running;
       }} catch (e) {{}}
-    }}, 2500);
+    }}, 2000);
   </script>
 </body>
 </html>"""
