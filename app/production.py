@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import subprocess
 import textwrap
 from abc import ABC, abstractmethod
@@ -32,6 +33,9 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
 from app.errors import AutotokSystemError, MediaValidationError
 from app.media import EXPECTED_HEIGHT, EXPECTED_WIDTH, verify_carousel_directory
 from app.models import (
+    DEFAULT_ACCOUNT_ID,
+    MAX_SLIDE_COUNT,
+    MIN_SLIDE_COUNT,
     CarouselPostPackage,
     ContentSlot,
     MediaValidationReport,
@@ -175,8 +179,9 @@ class ChatGPTCodexCliCarouselGenerator:
         vi_out_dir: Path,
         zh_out_dir: Path,
         workspace_dir: Path,
+        raw_slides_override: list[tuple[str, str, str]] | None = None,
     ) -> None:
-        """透過 ChatGPT Codex CLI `image_gen` 生成該時段的 6 張越南文輪播圖與 6 張繁體中文對照圖。"""
+        """透過 ChatGPT Codex CLI `image_gen` 生成該時段的 N 張越南文輪播圖與 N 張繁體中文對照圖（N 依內容切分決定）。"""
         if not self.is_available():
             raise AutotokSystemError(
                 f"找不到 ChatGPT Codex CLI 執行檔: {self.codex_bin}",
@@ -184,7 +189,12 @@ class ChatGPTCodexCliCarouselGenerator:
             )
 
         spec = DailySlotEditorialSpec.SPECS[slot]
-        raw_slides: list[tuple[str, str, str]] = list(spec["slides"])  # type: ignore[arg-type]
+        raw_slides: list[tuple[str, str, str]] = (
+            list(raw_slides_override)
+            if raw_slides_override is not None
+            else list(spec["slides"])  # type: ignore[arg-type]
+        )
+        total_slides = len(raw_slides)
         scene_briefs = self.SLIDE_SCENE_BRIEFS[slot]
 
         raw_png_dir = vi_out_dir.parent / "raw_codex_png"
@@ -192,11 +202,9 @@ class ChatGPTCodexCliCarouselGenerator:
         vi_out_dir.mkdir(parents=True, exist_ok=True)
         zh_out_dir.mkdir(parents=True, exist_ok=True)
 
-        # 將 6 頁分為兩批（1–3 頁、4–6 頁）呼叫 Codex CLI，每批透過 `image_gen` 產出 6 張寫實圖片（3 越 + 3 中），兼顧穩定度與速度
-        batches = [
-            (1, 2, 3),
-            (4, 5, 6),
-        ]
+        # 將 N 頁以每批最多 3 頁分批呼叫 Codex CLI，兼顧穩定度與速度
+        all_indices = list(range(1, total_slides + 1))
+        batches = [all_indices[i : i + 3] for i in range(0, total_slides, 3)]
 
         for batch_indices in batches:
             missing_in_batch = [
@@ -211,7 +219,7 @@ class ChatGPTCodexCliCarouselGenerator:
             slide_instructions: list[str] = []
             for idx in missing_in_batch:
                 vi_head, vi_body, zh_full = raw_slides[idx - 1]
-                scene_desc = scene_briefs[idx - 1]
+                scene_desc = scene_briefs[(idx - 1) % len(scene_briefs)]
                 zh_parts = zh_full.split("：", 1)
                 zh_head = zh_parts[0]
                 zh_body = zh_parts[1] if len(zh_parts) > 1 else zh_full
@@ -220,9 +228,9 @@ class ChatGPTCodexCliCarouselGenerator:
 
                 slide_instructions.append(
                     f"""
-### Slide {idx:02d}/06
+### Slide {idx:02d}/{total_slides:02d}
 - Photorealistic Taiwan Scene: {scene_desc}
-- Editorial Layout: Warm sunlit magazine-grade photography, top-left small brand label 'Carry | Đài Loan × Việt Nam', bottom progress dots at position {idx}/6 with text '{idx}/6', bottom-left 'SHARE', bottom-right 'SAVE'.
+- Editorial Layout: Warm sunlit magazine-grade photography, top-left small brand label 'Carry | Đài Loan × Việt Nam', bottom progress dots at position {idx}/{total_slides} with text '{idx}/{total_slides}', bottom-left 'SHARE', bottom-right 'SAVE'.
 - Step A (Vietnamese image): Call `image_gen` with exact on-image headline "{vi_head}" and concise subtitle "{vi_body}". Copy the generated PNG to `{vi_png}`.
 - Step B (Traditional Chinese image): Call `image_gen` with the SAME Taiwan scene style and exact on-image Traditional Chinese headline "{zh_head}" and subtitle "{zh_body}". Copy the generated PNG to `{zh_png}`.
 """
@@ -257,8 +265,8 @@ class ChatGPTCodexCliCarouselGenerator:
                     code="CODEX_EXEC_FAILED",
                 )
 
-        # 將 6 張越文 PNG 與 6 張中文 PNG 轉存為精確 1080×1350 JPEG
-        for idx in range(1, 7):
+        # 將 N 張越文 PNG 與 N 張中文 PNG 轉存為精確 1080×1350 JPEG
+        for idx in range(1, total_slides + 1):
             vi_png = raw_png_dir / f"vi_{idx:02d}.png"
             zh_png = raw_png_dir / f"zh_{idx:02d}.png"
             if not vi_png.is_file() or not zh_png.is_file():
@@ -629,28 +637,145 @@ class DailySlotEditorialSpec:
     }
 
 
+def split_content_into_slides(
+    raw_content: str = "",
+    *,
+    slot: ContentSlot = ContentSlot.NOON_1130,
+    account_handle: str = "@carry.vietnam.tw",
+    target_slide_count: int | None = None,
+) -> list[tuple[str, str, str]]:
+    """依使用者輸入的內容重點自動切分並決定輪播張數（3–10 張），不再死板固定 6 張。
+
+    切分邏輯：
+    1. 若有提供 `raw_content`（支援多行條列、編號清單或段落），先解析出獨立重點（body points）：
+       - 總張數 = 封面 1 張 + 重點 N 張 + 尾頁 CTA 1 張，自動約束於 `MIN_SLIDE_COUNT (3)` 至 `MAX_SLIDE_COUNT (10)`。
+       - 若使用者同時指定 `target_slide_count`，則以該張數為準進行合併或延展。
+    2. 若未提供 `raw_content`，則從時段預設庫依 `target_slide_count`（預設依內容複雜度自動調整）切分出對應張數。
+    回傳 `list[tuple[vi_headline, vi_body, zh_tw_full]]`。
+    """
+    spec = DailySlotEditorialSpec.SPECS[slot]
+    default_slides: list[tuple[str, str, str]] = list(spec["slides"])  # type: ignore[arg-type]
+
+    cleaned_lines = [
+        re.sub(r"^[\d\-\*\•\.\)\s]+", "", line.strip())
+        for line in re.split(r"[\n;；]+", raw_content.strip())
+        if line.strip()
+    ]
+
+    if not cleaned_lines:
+        if target_slide_count is None or target_slide_count == len(default_slides):
+            return default_slides
+        desired = max(MIN_SLIDE_COUNT, min(MAX_SLIDE_COUNT, target_slide_count))
+        if desired <= len(default_slides):
+            # 保留封面 + 前 (desired - 2) 個核心重點 + 尾頁 CTA
+            body_part = default_slides[1 : desired - 1]
+            selected = [default_slides[0], *body_part, default_slides[-1]]
+        else:
+            extra_needed = desired - len(default_slides)
+            extra_pool = [
+                (
+                    f"Mẹo thực tế #{i + 1} tại Đài Loan",
+                    "Kinh nghiệm thực tế giúp tiết kiệm thời gian và chi phí sinh hoạt hàng ngày tại Đài Loan.",
+                    f"實用補充重點 #{i + 1}：幫你在台灣日常省時又省錢的在地生活技巧。",
+                )
+                for i in range(extra_needed)
+            ]
+            selected = [default_slides[0], *default_slides[1:-1], *extra_pool, default_slides[-1]]
+        renumbered: list[tuple[str, str, str]] = []
+        for idx, (vh, vb, zf) in enumerate(selected, start=1):
+            vh_clean = re.sub(r"^\d{2}\.\s*", "", vh)
+            zf_clean = re.sub(r"^\d{2}\.\s*", "", zf)
+            renumbered.append((f"{idx:02d}. {vh_clean}", vb, f"{idx:02d}. {zf_clean}"))
+        return renumbered
+
+    # 使用者有輸入自訂主題或條列內容：若僅輸入 1 行長句，則依句號/逗號自動拆解為多個重點
+    if len(cleaned_lines) == 1:
+        sub_clauses = [
+            c.strip()
+            for c in re.split(r"[。！？!?，,、]+", cleaned_lines[0])
+            if len(c.strip()) >= 3
+        ]
+        if len(sub_clauses) >= 2:
+            topic_head = sub_clauses[0]
+            body_points = sub_clauses[1:]
+        else:
+            topic_head = cleaned_lines[0]
+            body_points = [
+                f"{topic_head}：關鍵準備與第一步",
+                f"{topic_head}：在台實務操作注意事項",
+            ]
+    else:
+        topic_head = cleaned_lines[0]
+        body_points = cleaned_lines[1:]
+
+    if target_slide_count is not None:
+        desired_total = max(MIN_SLIDE_COUNT, min(MAX_SLIDE_COUNT, target_slide_count))
+        desired_body_count = desired_total - 2
+        if len(body_points) > desired_body_count:
+            body_points = body_points[:desired_body_count]
+        while len(body_points) < desired_body_count:
+            step_no = len(body_points) + 1
+            body_points.append(f"{topic_head} — 延伸實用建議 #{step_no}")
+    else:
+        # 依內容重點數量自動決定張數（1 個重點 -> 3 張，2 個重點 -> 4 張... 最多 8 個重點 -> 10 張）
+        body_points = body_points[: MAX_SLIDE_COUNT - 2]
+        if not body_points:
+            body_points = [f"{topic_head}：核心實踐重點"]
+
+    total_count = len(body_points) + 2
+    slides_out: list[tuple[str, str, str]] = [
+        (
+            f"01. {topic_head[:36]} ({len(body_points)} điểm quan trọng)",
+            f"Tổng hợp {len(body_points)} trọng điểm thực tế tại Đài Loan dễ hiểu, lướt xem ngay!",
+            f"01. 【封面】{topic_head}：精選 {len(body_points)} 個必看重點（共 {total_count} 頁輪播）",
+        )
+    ]
+
+    for b_idx, point_zh in enumerate(body_points, start=2):
+        parts = point_zh.split("：", 1)
+        head_zh = parts[0].strip()
+        detail_zh = parts[1].strip() if len(parts) > 1 else f"在台生活與實務重點解析：{point_zh}"
+        slides_out.append(
+            (
+                f"{b_idx:02d}. Điểm chính #{b_idx - 1}: {head_zh[:32]}",
+                f"Hướng dẫn chi tiết tại Đài Loan: {detail_zh[:68]}",
+                f"{b_idx:02d}. {head_zh}：{detail_zh}",
+            )
+        )
+
+    slides_out.append(
+        (
+            f"{total_count:02d}. Lưu bài & Theo dõi {account_handle}",
+            f"Lưu lại trọn bộ {total_count} trang này và theo dõi {account_handle} để xem thêm kinh nghiệm tại Đài Loan!",
+            f"{total_count:02d}. 收藏本篇 {total_count} 頁指南並追蹤 {account_handle}：獲取更多在台實用攻略！",
+        )
+    )
+    return slides_out
+
+
 def verify_visual_diversity_and_text_integrity(
     package: CarouselPostPackage,
     media_dir: Path,
 ) -> tuple[bool, list[str]]:
-    """進階視覺品質 Gate：檢查越南文文案合規性、各頁文字非空且不重複、以及 6 張圖像素多樣性。"""
+    """進階視覺品質 Gate：檢查越南文文案合規性、各頁文字非空且不重複、以及 N 張圖像素多樣性。"""
     errors: list[str] = []
+    total_slides = len(package.slides)
 
     # 1. 檢查合規詞彙
     all_texts = [package.vi_title, package.vi_caption] + [s.vi_text for s in package.slides]
     errors.extend(audit_editorial_compliance(all_texts))
 
-    # 2. 檢查 6 頁越南文與繁體中文翻譯是否齊全且各頁文字不重複
+    # 2. 檢查 N 頁越南文與繁體中文翻譯是否齊全且各頁文字不重複
     vi_texts = [s.vi_text.strip() for s in package.slides]
     zh_texts = [s.zh_tw_translation.strip() for s in package.slides]
-    if len(set(vi_texts)) != 6:
-        errors.append("六頁越南文圖中文字出現重複內容，違反每頁獨立重點規範。")
-    if len(set(zh_texts)) != 6:
-        errors.append("六頁繁體中文對照翻譯出現重複內容。")
+    if len(set(vi_texts)) != total_slides:
+        errors.append(f"輪播共 {total_slides} 頁之越南文圖中文字出現重複內容，違反每頁獨立重點規範。")
+    if len(set(zh_texts)) != total_slides:
+        errors.append(f"輪播共 {total_slides} 頁之繁體中文對照翻譯出現重複內容。")
 
-    # 3. 檢查 6 張圖片之間的像素平均色彩差異（防止全組共用同一死板背景）
+    # 3. 檢查 N 張圖片之間的像素平均色彩差異（防止全組共用同一死板背景）
     mean_vectors: list[tuple[float, float, float]] = []
-    for idx in range(1, 7):
+    for idx in range(1, total_slides + 1):
         img_path = media_dir / f"slide_{idx:02d}.jpg"
         if not img_path.is_file():
             errors.append(f"缺少 slide_{idx:02d}.jpg")
@@ -676,19 +801,17 @@ def produce_carousel_with_qa_retry(
     post_id: str,
     scheduled_date_str: str,
     output_base_dir: Path,
+    account_id: str = DEFAULT_ACCOUNT_ID,
+    account_handle: str = "@carry.vietnam.tw",
+    custom_content: str = "",
+    target_slide_count: int | None = None,
     scene_provider: SceneImageProvider | None = None,
     use_codex_cli: bool = False,
     codex_generator: ChatGPTCodexCliCarouselGenerator | None = None,
     max_retries: int = 2,
     simulate_first_attempt_corrupt_slide: int | None = None,
 ) -> tuple[CarouselPostPackage, MediaValidationReport, Path]:
-    """生產單篇六頁越南文輪播圖（含同步產出繁體中文對照圖），並執行 Quality Gate 與問題頁限次重製。
-
-    若 `use_codex_cli=True`，將優先使用本機 ChatGPT Codex CLI (`/Applications/ChatGPT.app/Contents/Resources/codex`)
-    內建的 `image_gen` 生成雜誌級寫實台灣生活攝影輪播圖與繁體中文對照圖，並裁切為 1080×1350 JPEG。
-    回傳 `(CarouselPostPackage, MediaValidationReport, zh_reference_media_dir)`。
-    若重試 `max_retries` 次後仍不合格，將 `package.status` 標記為 `QUALITY_FAILED` 並拋出 `MediaValidationError`。
-    """
+    """生產單篇動態張數（3–10 張，預設依內容切分）之雙語輪播圖，並執行 Quality Gate 與問題頁限次重製。"""
     provider = scene_provider or ProceduralAtmosphericSceneProvider()
     renderer = SlideTypographyRenderer()
     spec = DailySlotEditorialSpec.SPECS[slot]
@@ -699,7 +822,19 @@ def produce_carousel_with_qa_retry(
     vi_dir.mkdir(parents=True, exist_ok=True)
     zh_dir.mkdir(parents=True, exist_ok=True)
 
-    raw_slides: list[tuple[str, str, str]] = list(spec["slides"])  # type: ignore[arg-type]
+    raw_slides = split_content_into_slides(
+        custom_content,
+        slot=slot,
+        account_handle=account_handle,
+        target_slide_count=target_slide_count,
+    )
+    total_slides = len(raw_slides)
+
+    # 清除舊有多餘頁碼圖片（例如先前為 6 張、本次改切分為 4 張時）
+    for d in (vi_dir, zh_dir):
+        for old_jpg in d.glob("slide_*.jpg"):
+            old_jpg.unlink(missing_ok=True)
+
     slides_items: list[SlideItem] = []
 
     if use_codex_cli:
@@ -708,19 +843,24 @@ def produce_carousel_with_qa_retry(
         has_all_raw_png = all(
             (raw_png_dir / f"vi_{i:02d}.png").is_file()
             and (raw_png_dir / f"zh_{i:02d}.png").is_file()
-            for i in range(1, 7)
+            for i in range(1, total_slides + 1)
         )
-        # 若目標目錄已經有完整 6 張 Codex 原生 PNG 與 6 張越文/中文 JPEG，直接驗證並包裝，避免重複耗時生成；
-        # 若僅有舊版 Pillow mock JPEG（無 raw_codex_png），則會自動觸發 Codex CLI 生成並覆蓋舊圖。
-        existing_vi_ok = verify_carousel_directory(vi_dir, raise_on_error=False).passed
-        existing_zh_ok = verify_carousel_directory(zh_dir, raise_on_error=False).passed
-        if not (has_all_raw_png and existing_vi_ok and existing_zh_ok):
+        if not has_all_raw_png:
             codex_gen.generate_slot_via_codex(
                 slot=slot,
                 vi_out_dir=vi_dir,
                 zh_out_dir=zh_dir,
                 workspace_dir=Path.cwd(),
+                raw_slides_override=raw_slides,
             )
+        else:
+            for idx in range(1, total_slides + 1):
+                resize_and_crop_to_1080x1350(
+                    raw_png_dir / f"vi_{idx:02d}.png", vi_dir / f"slide_{idx:02d}.jpg"
+                )
+                resize_and_crop_to_1080x1350(
+                    raw_png_dir / f"zh_{idx:02d}.png", zh_dir / f"slide_{idx:02d}.jpg"
+                )
         for idx, (vi_head, vi_body, zh_full) in enumerate(raw_slides, start=1):
             vi_path = vi_dir / f"slide_{idx:02d}.jpg"
             slides_items.append(
@@ -741,6 +881,7 @@ def produce_carousel_with_qa_retry(
             vi_img = renderer.render_slide(
                 bg,
                 slide_index=idx,
+                total_slides=total_slides,
                 slot=slot,
                 headline_text=vi_head,
                 body_text=vi_body,
@@ -749,20 +890,20 @@ def produce_carousel_with_qa_retry(
             )
             vi_path = vi_dir / f"slide_{idx:02d}.jpg"
 
-            # 支援在測試中模擬第一次產生時某單頁尺寸錯誤，驗證問題頁自動限次重製機制
             if simulate_first_attempt_corrupt_slide == idx:
                 bad_img = vi_img.resize((800, 800))
                 bad_img.save(vi_path, format="JPEG", quality=90)
             else:
                 vi_img.save(vi_path, format="JPEG", quality=94, optimize=True)
 
-            # 同步渲染繁體中文對照版圖片（供 Notion `中文版圖片` 欄位與審稿使用）
+            # 同步渲染繁體中文主視圖圖片（1080×1350 JPEG）
             zh_parts = zh_full.split("：", 1)
             zh_head = zh_parts[0]
             zh_body = zh_parts[1] if len(zh_parts) > 1 else zh_full
             zh_img = renderer.render_slide(
                 bg,
                 slide_index=idx,
+                total_slides=total_slides,
                 slot=slot,
                 headline_text=zh_head,
                 body_text=zh_body,
@@ -783,24 +924,41 @@ def produce_carousel_with_qa_retry(
             )
         is_mock_flag = provider.provider_name.endswith("mock")
 
+    custom_first_line = custom_content.strip().splitlines()[0].strip() if custom_content.strip() else ""
+    zh_title = (
+        f"{custom_first_line[:38]}（共 {total_slides} 頁輪播）"
+        if custom_first_line
+        else str(spec["zh_tw_title"])
+    )
+    vi_title = (
+        f"{total_slides} điểm cần biết: {custom_first_line[:45]}"
+        if custom_first_line
+        else str(spec["vi_title"])
+    )
+
     package = CarouselPostPackage(
         post_id=post_id,
+        account_id=account_id,
         slot=slot,
         scheduled_at_taipei=f"{scheduled_date_str}T{time_str}:00+08:00",
-        vi_title=str(spec["vi_title"]),
-        zh_tw_title=str(spec["zh_tw_title"]),
+        vi_title=vi_title[:90],
+        zh_tw_title=zh_title,
         vi_caption=str(spec["vi_caption"]),
         zh_tw_caption=str(spec["zh_tw_caption"]),
         hashtags=list(spec["hashtags"]),  # type: ignore[arg-type]
         slides=slides_items,
         media_dir=vi_dir,
+        core_angle=str(spec.get("core_angle", "")),
+        cta=str(spec.get("cta", "")),
         is_mock=is_mock_flag,
         status=PostStatus.GENERATING,
     )
 
     # 執行 Quality Gate 驗證，若失敗則針對問題頁限次重製
     for attempt in range(1, max_retries + 2):
-        base_report = verify_carousel_directory(vi_dir, raise_on_error=False)
+        base_report = verify_carousel_directory(
+            vi_dir, raise_on_error=False, expected_count=total_slides
+        )
         div_passed, div_errors = verify_visual_diversity_and_text_integrity(package, vi_dir)
         combined_errors = base_report.errors + div_errors
 
@@ -813,18 +971,18 @@ def produce_carousel_with_qa_retry(
             base_report.passed = False
             base_report.errors = combined_errors
             raise MediaValidationError(
-                f"QUALITY_FAILED：經過 {max_retries} 次重試後仍未通過六張圖品質 Gate",
+                f"QUALITY_FAILED：經過 {max_retries} 次重試後仍未通過 {total_slides} 張圖品質 Gate",
                 reasons=combined_errors,
             )
 
         # 找出需要重製的問題頁碼（若無法定位單頁則重製全組）
         problem_indices: set[int] = set()
         for err in combined_errors:
-            for idx in range(1, 7):
+            for idx in range(1, total_slides + 1):
                 if f"slide_{idx:02d}.jpg" in err:
                     problem_indices.add(idx)
         if not problem_indices:
-            problem_indices = {1, 2, 3, 4, 5, 6}
+            problem_indices = set(range(1, total_slides + 1))
 
         for idx in sorted(problem_indices):
             vi_head, vi_body, zh_full = raw_slides[idx - 1]
@@ -832,6 +990,7 @@ def produce_carousel_with_qa_retry(
             vi_img = renderer.render_slide(
                 bg,
                 slide_index=idx,
+                total_slides=total_slides,
                 slot=slot,
                 headline_text=vi_head,
                 body_text=vi_body,

@@ -203,9 +203,10 @@ class NotionSyncService:
         time_str, category_zh = SLOT_TO_NOTION_CATEGORY[package.slot]
         scheduled_date = package.scheduled_at_taipei[:10]
         spec = DailySlotEditorialSpec.SPECS.get(package.slot, {})
-        core_angle = str(spec.get("core_angle", "在台越南人實用生活與成長指南"))
-        cta_text = str(spec.get("cta", "Lưu lại bài viết & theo dõi @carry.vietnam.tw!"))
+        core_angle = package.core_angle or str(spec.get("core_angle", "在台越南人實用生活與成長指南"))
+        cta_text = package.cta or str(spec.get("cta", "Lưu lại bài viết & theo dõi @carry.vietnam.tw!"))
         notion_status = POST_STATUS_TO_NOTION_STATUS.get(package.status, "圖片完成")
+        total_slides = len(package.slides)
 
         with httpx.Client(transport=self._transport, timeout=60.0) as client:
             # 2. 上傳 6 張越南文正式 JPEG 至 Notion 持久化空間
@@ -347,7 +348,7 @@ class NotionSyncService:
                             "rich_text": [
                                 {
                                     "type": "text",
-                                    "text": {"content": f"Slide {slide.index:02d} / 06"},
+                                    "text": {"content": f"Slide {slide.index:02d} / {total_slides:02d}"},
                                 }
                             ]
                         },

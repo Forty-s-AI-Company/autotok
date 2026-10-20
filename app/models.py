@@ -12,6 +12,27 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+# 輪播張數規則（依內容切分後決定張數，不再固定 6 張）：
+# - 最少 3 張：封面 1 張 + 至少 1 個重點 + 結尾 CTA 1 張
+# - 預設上限 10 張：兼顧閱讀完成率與收藏意願（TikTok 照片貼文官方上限為 35 張）
+MIN_SLIDE_COUNT = 3
+MAX_SLIDE_COUNT = 10
+TIKTOK_PHOTO_HARD_LIMIT = 35
+DEFAULT_ACCOUNT_ID = "carry-vietnam-tw"
+
+
+class TikTokAccountProfile(BaseModel):
+    """多帳號管理設定檔（支援單一使用者管理並切換多個 TikTok 帳號）。"""
+
+    account_id: str = Field(min_length=1, description="帳號唯一識別碼（如 carry-vietnam-tw）")
+    handle: str = Field(min_length=2, description="TikTok 帳號名稱（如 @carry.vietnam.tw）")
+    display_name: str = Field(min_length=1, description="帳號顯示名稱與品牌副標")
+    market_focus: str = Field(default="在台越南人生活與成長", description="目標受眾與市場定位")
+    primary_language: str = Field(default="zh-TW", description="創作者審稿與主要檢視語言（預設繁體中文）")
+    target_language: str = Field(default="vi", description="發布目標受眾語言（如 vi 越南文）")
+    notion_database_id: str = Field(default="f1bc34396f154e62bca90c9deea19d7a", description="綁定之 Notion 資料庫 ID")
+    is_active: bool = Field(default=False, description="是否為目前作用中的切換帳號")
+
 
 class PostStatus(StrEnum):
     """貼文狀態機列舉（對應 MASTER_SPEC.md 第 8 節）。"""
@@ -174,9 +195,9 @@ class TopicOpportunity(BaseModel):
 
 
 class SlideItem(BaseModel):
-    """單頁輪播圖文結構（01–06）。"""
+    """單頁輪播圖文結構（頁碼 1..N，N 依內容決定）。"""
 
-    index: int = Field(ge=1, le=6, description="頁碼 1 到 6")
+    index: int = Field(ge=1, le=TIKTOK_PHOTO_HARD_LIMIT, description="頁碼 1 到 N")
     vi_text: str = Field(min_length=1, description="越南文圖中文字")
     zh_tw_translation: str = Field(min_length=1, description="繁體中文逐頁翻譯對照")
     image_path: Path | None = Field(default=None, description="本地圖片路徑")
@@ -208,9 +229,10 @@ class MediaValidationReport(BaseModel):
 
 
 class CarouselPostPackage(BaseModel):
-    """六頁照片輪播完整貼文資料包（對應 content_posts 核心結構）。"""
+    """照片輪播完整貼文資料包（對應 content_posts 核心結構；張數依內容切分決定）。"""
 
     post_id: str = Field(description="貼文唯一識別碼")
+    account_id: str = Field(default=DEFAULT_ACCOUNT_ID, description="所屬 TikTok 帳號 ID")
     slot: ContentSlot = Field(default=ContentSlot.NOON_1130)
     scheduled_at_taipei: str = Field(description="預定發布時間（Asia/Taipei ISO 字串）")
     vi_title: str = Field(max_length=90, description="越南文標題（TikTok 照片標題上限 90 字元）")
@@ -218,10 +240,16 @@ class CarouselPostPackage(BaseModel):
     vi_caption: str = Field(max_length=4000, description="越南文貼文內容（不含或含標籤）")
     zh_tw_caption: str = Field(description="繁體中文貼文翻譯")
     hashtags: list[str] = Field(description="恰好五個簡明相關 hashtag")
-    slides: list[SlideItem] = Field(description="六頁圖文對照清單")
-    media_dir: Path = Field(description="六張獨立 JPEG 所在目錄")
+    slides: list[SlideItem] = Field(description="逐頁圖文對照清單（張數 3–10）")
+    media_dir: Path = Field(description="發布語系獨立 JPEG 所在目錄")
+    core_angle: str = Field(default="", description="核心切角")
+    cta: str = Field(default="", description="行動呼籲")
     is_mock: bool = Field(default=True, description="是否為測試/Mock 內容（嚴禁將 Mock 當作正式成品）")
     status: PostStatus = Field(default=PostStatus.DRAFT)
+
+    @property
+    def slide_count(self) -> int:
+        return len(self.slides)
 
     @field_validator("hashtags")
     @classmethod
@@ -241,13 +269,16 @@ class CarouselPostPackage(BaseModel):
 
     @field_validator("slides")
     @classmethod
-    def validate_six_slides(cls, v: list[SlideItem]) -> list[SlideItem]:
-        """強制檢查恰好六頁且順序為 1..6。"""
-        if len(v) != 6:
-            raise ValueError(f"必須恰好包含 6 頁輪播資料，目前為 {len(v)} 頁")
+    def validate_slide_sequence(cls, v: list[SlideItem]) -> list[SlideItem]:
+        """檢查張數介於 MIN_SLIDE_COUNT–MAX_SLIDE_COUNT，且頁碼連續為 1..N。"""
+        if not MIN_SLIDE_COUNT <= len(v) <= MAX_SLIDE_COUNT:
+            raise ValueError(
+                f"輪播張數必須介於 {MIN_SLIDE_COUNT}–{MAX_SLIDE_COUNT} 張，目前為 {len(v)} 張"
+            )
         indices = [item.index for item in v]
-        if indices != [1, 2, 3, 4, 5, 6]:
-            raise ValueError(f"輪播頁碼必須嚴格為 [1, 2, 3, 4, 5, 6]，目前為 {indices}")
+        expected = list(range(1, len(v) + 1))
+        if indices != expected:
+            raise ValueError(f"輪播頁碼必須連續為 {expected}，目前為 {indices}")
         return v
 
 

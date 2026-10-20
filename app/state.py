@@ -16,13 +16,49 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.models import (
+    DEFAULT_ACCOUNT_ID,
     CarouselPostPackage,
     PostPerformanceObservation,
     PostStatus,
     ResearchCase,
     SeedKeywordEntry,
+    SlideItem,
+    TikTokAccountProfile,
     TopicOpportunity,
 )
+
+DEFAULT_ACCOUNTS_SEED: list[TikTokAccountProfile] = [
+    TikTokAccountProfile(
+        account_id="carry-vietnam-tw",
+        handle="@carry.vietnam.tw",
+        display_name="Carry | Đài Loan × Việt Nam",
+        market_focus="在台越南移工、留學生、新住民生活與成長",
+        primary_language="zh-TW",
+        target_language="vi",
+        notion_database_id="f1bc34396f154e62bca90c9deea19d7a",
+        is_active=True,
+    ),
+    TikTokAccountProfile(
+        account_id="carry-tw-food-travel",
+        handle="@carry.tw.food",
+        display_name="Carry | 台灣美食與夜市指南 (VN)",
+        market_focus="台灣道地小吃、夜市探索與週末旅遊攻略",
+        primary_language="zh-TW",
+        target_language="vi",
+        notion_database_id="f1bc34396f154e62bca90c9deea19d7a",
+        is_active=False,
+    ),
+    TikTokAccountProfile(
+        account_id="carry-digital-creator",
+        handle="@carry.creator.lab",
+        display_name="Carry | 手機創作與自媒體實戰",
+        market_focus="跨境短影音與圖文輪播教學、AI 效率工具",
+        primary_language="zh-TW",
+        target_language="vi",
+        notion_database_id="f1bc34396f154e62bca90c9deea19d7a",
+        is_active=False,
+    ),
+]
 
 
 class PostStateRepository:
@@ -32,6 +68,7 @@ class PostStateRepository:
         self.db_path = db_path.expanduser().resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
+        self._seed_default_accounts()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path))
@@ -42,8 +79,21 @@ class PostStateRepository:
         with self._connect() as conn:
             conn.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS tiktok_accounts (
+                    account_id TEXT PRIMARY KEY,
+                    handle TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    market_focus TEXT NOT NULL,
+                    primary_language TEXT NOT NULL DEFAULT 'zh-TW',
+                    target_language TEXT NOT NULL DEFAULT 'vi',
+                    notion_database_id TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS content_posts (
                     post_id TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL DEFAULT 'carry-vietnam-tw',
                     slot TEXT NOT NULL,
                     scheduled_at_taipei TEXT NOT NULL,
                     vi_title TEXT NOT NULL,
@@ -53,6 +103,8 @@ class PostStateRepository:
                     hashtags_json TEXT NOT NULL,
                     slides_json TEXT NOT NULL,
                     media_dir TEXT NOT NULL,
+                    core_angle TEXT NOT NULL DEFAULT '',
+                    cta TEXT NOT NULL DEFAULT '',
                     is_mock INTEGER NOT NULL DEFAULT 1,
                     status TEXT NOT NULL,
                     platform_post_id TEXT,
@@ -135,6 +187,110 @@ class PostStateRepository:
                 );
                 """
             )
+            # 相容既有 SQLite 資料庫欄位遷移
+            existing_cols = {
+                str(r["name"])
+                for r in conn.execute("PRAGMA table_info(content_posts)").fetchall()
+            }
+            if "account_id" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE content_posts ADD COLUMN account_id TEXT NOT NULL DEFAULT 'carry-vietnam-tw'"
+                )
+            if "core_angle" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE content_posts ADD COLUMN core_angle TEXT NOT NULL DEFAULT ''"
+                )
+            if "cta" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE content_posts ADD COLUMN cta TEXT NOT NULL DEFAULT ''"
+                )
+
+    def _seed_default_accounts(self) -> None:
+        with self._connect() as conn:
+            count_row = conn.execute("SELECT COUNT(*) AS cnt FROM tiktok_accounts").fetchone()
+            if count_row and int(count_row["cnt"]) > 0:
+                return
+        for acc in DEFAULT_ACCOUNTS_SEED:
+            self.upsert_account(acc)
+
+    def upsert_account(self, profile: TikTokAccountProfile) -> None:
+        """新增或更新 TikTok 帳號設定。"""
+        now_iso = datetime.now(UTC).isoformat()
+        with self._connect() as conn:
+            if profile.is_active:
+                conn.execute("UPDATE tiktok_accounts SET is_active = 0")
+            conn.execute(
+                """
+                INSERT INTO tiktok_accounts (
+                    account_id, handle, display_name, market_focus,
+                    primary_language, target_language, notion_database_id,
+                    is_active, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id) DO UPDATE SET
+                    handle = excluded.handle,
+                    display_name = excluded.display_name,
+                    market_focus = excluded.market_focus,
+                    primary_language = excluded.primary_language,
+                    target_language = excluded.target_language,
+                    notion_database_id = excluded.notion_database_id,
+                    is_active = excluded.is_active,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    profile.account_id,
+                    profile.handle if profile.handle.startswith("@") else f"@{profile.handle}",
+                    profile.display_name,
+                    profile.market_focus,
+                    profile.primary_language,
+                    profile.target_language,
+                    profile.notion_database_id,
+                    1 if profile.is_active else 0,
+                    now_iso,
+                ),
+            )
+
+    def list_accounts(self) -> list[TikTokAccountProfile]:
+        """列出所有已綁定的 TikTok 帳號。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tiktok_accounts ORDER BY is_active DESC, account_id ASC"
+            ).fetchall()
+        return [
+            TikTokAccountProfile(
+                account_id=str(r["account_id"]),
+                handle=str(r["handle"]),
+                display_name=str(r["display_name"]),
+                market_focus=str(r["market_focus"]),
+                primary_language=str(r["primary_language"]),
+                target_language=str(r["target_language"]),
+                notion_database_id=str(r["notion_database_id"]),
+                is_active=bool(r["is_active"]),
+            )
+            for r in rows
+        ]
+
+    def get_active_account(self) -> TikTokAccountProfile:
+        """取得目前作用中的 TikTok 帳號。"""
+        accounts = self.list_accounts()
+        for acc in accounts:
+            if acc.is_active:
+                return acc
+        return accounts[0] if accounts else DEFAULT_ACCOUNTS_SEED[0]
+
+    def set_active_account(self, account_id: str) -> TikTokAccountProfile:
+        """切換目前作用中的 TikTok 帳號。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT account_id FROM tiktok_accounts WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()
+            if row is not None:
+                conn.execute("UPDATE tiktok_accounts SET is_active = 0")
+                conn.execute(
+                    "UPDATE tiktok_accounts SET is_active = 1 WHERE account_id = ?",
+                    (account_id,),
+                )
+        return self.get_active_account()
 
     def upsert_post(self, package: CarouselPostPackage) -> None:
         """新增或更新貼文資料包狀態。"""
@@ -153,11 +309,12 @@ class PostStateRepository:
             conn.execute(
                 """
                 INSERT INTO content_posts (
-                    post_id, slot, scheduled_at_taipei, vi_title, zh_tw_title,
+                    post_id, account_id, slot, scheduled_at_taipei, vi_title, zh_tw_title,
                     vi_caption, zh_tw_caption, hashtags_json, slides_json,
-                    media_dir, is_mock, status, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    media_dir, core_angle, cta, is_mock, status, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(post_id) DO UPDATE SET
+                    account_id = excluded.account_id,
                     slot = excluded.slot,
                     scheduled_at_taipei = excluded.scheduled_at_taipei,
                     vi_title = excluded.vi_title,
@@ -167,12 +324,15 @@ class PostStateRepository:
                     hashtags_json = excluded.hashtags_json,
                     slides_json = excluded.slides_json,
                     media_dir = excluded.media_dir,
+                    core_angle = excluded.core_angle,
+                    cta = excluded.cta,
                     is_mock = excluded.is_mock,
                     status = excluded.status,
                     updated_at = excluded.updated_at
                 """,
                 (
                     package.post_id,
+                    package.account_id or DEFAULT_ACCOUNT_ID,
                     package.slot.value,
                     package.scheduled_at_taipei,
                     package.vi_title,
@@ -182,11 +342,60 @@ class PostStateRepository:
                     json.dumps(package.hashtags, ensure_ascii=False),
                     json.dumps(slides_data, ensure_ascii=False),
                     str(package.media_dir),
+                    package.core_angle,
+                    package.cta,
                     1 if package.is_mock else 0,
                     package.status.value,
                     now_iso,
                 ),
             )
+
+    def list_posts(self, *, account_id: str | None = None) -> list[CarouselPostPackage]:
+        """查詢已儲存的貼文資料包（支援依帳號篩選）。"""
+        query = "SELECT * FROM content_posts"
+        params: tuple[object, ...] = ()
+        if account_id:
+            query += " WHERE account_id = ?"
+            params = (account_id,)
+        query += " ORDER BY scheduled_at_taipei DESC, updated_at DESC"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+
+        results: list[CarouselPostPackage] = []
+        for r in rows:
+            raw_slides = json.loads(r["slides_json"])
+            slides = [
+                SlideItem(
+                    index=int(s["index"]),
+                    vi_text=str(s["vi_text"]),
+                    zh_tw_translation=str(s["zh_tw_translation"]),
+                    image_path=Path(s["image_path"]) if s.get("image_path") else None,
+                    sha256=s.get("sha256"),
+                )
+                for s in raw_slides
+            ]
+            if not (3 <= len(slides) <= 10):
+                continue
+            results.append(
+                CarouselPostPackage(
+                    post_id=str(r["post_id"]),
+                    account_id=str(r["account_id"] or DEFAULT_ACCOUNT_ID),
+                    slot=r["slot"],
+                    scheduled_at_taipei=str(r["scheduled_at_taipei"]),
+                    vi_title=str(r["vi_title"]),
+                    zh_tw_title=str(r["zh_tw_title"]),
+                    vi_caption=str(r["vi_caption"]),
+                    zh_tw_caption=str(r["zh_tw_caption"]),
+                    hashtags=json.loads(r["hashtags_json"]),
+                    slides=slides,
+                    media_dir=Path(str(r["media_dir"])),
+                    core_angle=str(r["core_angle"] or ""),
+                    cta=str(r["cta"] or ""),
+                    is_mock=bool(r["is_mock"]),
+                    status=PostStatus(str(r["status"])),
+                )
+            )
+        return results
 
     def update_status(
         self,

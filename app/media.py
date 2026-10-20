@@ -20,6 +20,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app.errors import MediaValidationError
 from app.models import (
+    MAX_SLIDE_COUNT,
+    MIN_SLIDE_COUNT,
     CarouselPostPackage,
     ContentSlot,
     MediaValidationItem,
@@ -30,9 +32,10 @@ from app.models import (
 
 EXPECTED_WIDTH = 1080
 EXPECTED_HEIGHT = 1350
+# 測試用 mock 素材固定產出 6 張；正式內容張數依內容切分決定（MIN_SLIDE_COUNT–MAX_SLIDE_COUNT）
 EXPECTED_SLIDE_COUNT = 6
 JPEG_MAGIC_PREFIX = b"\xff\xd8\xff"
-SLIDE_FILENAME_PATTERN = re.compile(r"^(?:slide_|page_|img_)?0?([1-6])\.(?:jpg|jpeg)$", re.IGNORECASE)
+SLIDE_FILENAME_PATTERN = re.compile(r"^(?:slide_|page_|img_)?0?(\d{1,2})\.(?:jpg|jpeg)$", re.IGNORECASE)
 
 # 預設測試用六頁台越主題內容（明顯標示 TEST / MOCK）
 DEFAULT_MOCK_SLIDES: list[tuple[str, str]] = [
@@ -208,17 +211,22 @@ def generate_mock_carousel_media(output_dir: Path, post_id: str = "mock-post-001
     )
 
 
-def verify_carousel_directory(media_dir: Path, *, raise_on_error: bool = False) -> MediaValidationReport:
-    """驗證目錄是否包含合規的六張獨立 1080×1350 JPEG 照片輪播。
+def verify_carousel_directory(
+    media_dir: Path,
+    *,
+    raise_on_error: bool = False,
+    expected_count: int | None = None,
+) -> MediaValidationReport:
+    """驗證目錄是否包含合規的獨立 1080×1350 JPEG 照片輪播。
 
     檢查項目：
     1. 目錄存在且為資料夾
     2. 拒絕目錄中出現任何非 JPEG 圖片檔（例如 .png, .webp, .gif）
-    3. 圖片數量必須恰好為 6 張
-    4. 檔名頁碼必須對應 01–06 順序無缺失
+    3. 張數：若指定 `expected_count` 則須完全相符；否則須介於 MIN_SLIDE_COUNT–MAX_SLIDE_COUNT
+    4. 檔名頁碼必須連續為 1..N 無缺漏
     5. 每個檔案二進位開頭必須為真實 JPEG magic bytes (FF D8 FF) 且 Pillow format == "JPEG"
     6. 每張圖片尺寸必須為 1080×1350
-    7. 六張圖片的 SHA-256 不得重複（禁止複製同張圖片湊數）
+    7. 圖片 SHA-256 不得重複（禁止複製同張圖片湊數）
     """
     resolved_dir = media_dir.expanduser().resolve()
     errors: list[str] = []
@@ -248,23 +256,32 @@ def verify_carousel_directory(media_dir: Path, *, raise_on_error: bool = False) 
         errors.append(f"偵測到不允許的非 JPEG 媒體格式（如 PNG/影片）: {', '.join(forbidden_files)}")
 
     jpg_files = [p for p in all_files if p.suffix.lower() in {".jpg", ".jpeg"}]
-    if len(jpg_files) != EXPECTED_SLIDE_COUNT:
-        errors.append(f"JPEG 圖片數量必須恰好為 {EXPECTED_SLIDE_COUNT} 張，目前找到 {len(jpg_files)} 張")
+    if expected_count is not None:
+        if len(jpg_files) != expected_count:
+            errors.append(f"JPEG 圖片數量必須恰好為 {expected_count} 張，目前找到 {len(jpg_files)} 張")
+    elif not MIN_SLIDE_COUNT <= len(jpg_files) <= MAX_SLIDE_COUNT:
+        errors.append(
+            f"JPEG 圖片數量必須介於 {MIN_SLIDE_COUNT}–{MAX_SLIDE_COUNT} 張，目前找到 {len(jpg_files)} 張"
+        )
 
     parsed_slides: list[tuple[int, Path]] = []
     for file_path in jpg_files:
         match = SLIDE_FILENAME_PATTERN.match(file_path.name)
         if not match:
             errors.append(
-                f"檔名 '{file_path.name}' 不符合頁碼命名規範（應為 slide_01.jpg 至 slide_06.jpg）"
+                f"檔名 '{file_path.name}' 不符合頁碼命名規範（應為 slide_01.jpg、slide_02.jpg…）"
             )
             continue
         parsed_slides.append((int(match.group(1)), file_path))
 
     parsed_slides.sort(key=lambda x: x[0])
     found_indices = [idx for idx, _ in parsed_slides]
-    if found_indices != [1, 2, 3, 4, 5, 6]:
-        errors.append(f"輪播頁碼順序必須完整為 [1, 2, 3, 4, 5, 6]，實際解析為 {found_indices}")
+    expected_indices = list(range(1, len(found_indices) + 1))
+    if found_indices != expected_indices:
+        max_idx = max(found_indices) if found_indices else 0
+        errors.append(
+            f"輪播頁碼必須連續為 {expected_indices}，實際解析為 {found_indices}（有缺頁或跳號；依最大頁碼必須恰好為 {max_idx} 張，目前找到 {len(jpg_files)} 張）"
+        )
 
     seen_hashes: dict[str, str] = {}
 
@@ -319,17 +336,17 @@ def verify_carousel_directory(media_dir: Path, *, raise_on_error: bool = False) 
             )
         )
 
-    passed = len(errors) == 0 and len(items) == EXPECTED_SLIDE_COUNT
+    passed = len(errors) == 0 and len(items) == len(jpg_files) and len(items) > 0
     report = MediaValidationReport(
         directory=str(resolved_dir),
         passed=passed,
-        expected_count=EXPECTED_SLIDE_COUNT,
+        expected_count=expected_count if expected_count is not None else len(jpg_files),
         actual_count=len(jpg_files),
         items=items,
         errors=errors,
     )
 
     if not passed and raise_on_error:
-        raise MediaValidationError("六張照片輪播媒體驗證未通過", reasons=errors)
+        raise MediaValidationError("照片輪播媒體驗證未通過", reasons=errors)
 
     return report
