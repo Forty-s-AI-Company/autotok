@@ -43,9 +43,12 @@ class handler(BaseHTTPRequestHandler):
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
         query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        # 考慮 Vercel rewrite headers
+        req_path = self.headers.get("x-matched-path", "") or path
 
         # 1. 登入轉址
-        if path.endswith("/auth/login"):
+        if "auth/login" in req_path or "auth/login" in path:
             auth_url = (
                 "https://www.tiktok.com/v2/auth/authorize/?"
                 + urllib.parse.urlencode({
@@ -62,7 +65,7 @@ class handler(BaseHTTPRequestHandler):
             return
 
         # 2. OAuth 回呼處理
-        if path.endswith("/auth/callback"):
+        if "auth/callback" in req_path or "auth/callback" in path:
             code = query_params.get("code", [None])[0]
             error = query_params.get("error", [None])[0]
             error_desc = query_params.get("error_description", [""])[0]
@@ -168,6 +171,8 @@ class handler(BaseHTTPRequestHandler):
         self._send_json(200, {
             "status": "ok",
             "app": "AutoTok",
+            "received_path": self.path,
+            "x_matched_path": self.headers.get("x-matched-path", ""),
             "auth_login_url": f"{BASE_DOMAIN}/api/auth/login",
             "callback_url": REDIRECT_URI,
         })
@@ -175,8 +180,9 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
+        req_path = self.headers.get("x-matched-path", "") or path
 
-        if path.endswith("/publish"):
+        if "publish" in req_path or "publish" in path:
             content_length = int(self.headers.get("Content-Length", 0))
             post_body = self.rfile.read(content_length).decode("utf-8")
             form_data = urllib.parse.parse_qs(post_body)
