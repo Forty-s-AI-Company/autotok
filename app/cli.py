@@ -16,9 +16,11 @@ from pathlib import Path
 from app.adapters import get_uploader_adapter
 from app.config import AppSettings, redact_sensitive
 from app.errors import AutotokSystemError
+from app.gui import run_gui_server
 from app.media import generate_mock_carousel_media, verify_carousel_directory
 from app.models import ContentSlot, SourceType
 from app.notion_schema import NotionInspector
+from app.notion_sync import NotionSyncService
 from app.production import produce_carousel_with_qa_retry
 from app.research import (
     INITIAL_SEED_KEYWORDS,
@@ -175,6 +177,45 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         default="artifacts/daily_production",
         help="輸出根目錄（預設：artifacts/daily_production）",
+    )
+
+    # 8. sync-notion (Phase 4)
+    sync_parser = sub.add_parser(
+        "sync-notion",
+        help="將每日三時段（或指定時段）通過品質 Gate 的 6 張越文 JPEG、6 張繁中對照 JPEG 與逐頁翻譯同步寫入 Notion 資料庫",
+    )
+    sync_parser.add_argument(
+        "--date",
+        default="2026-10-21",
+        help="目標發布日期 YYYY-MM-DD（Asia/Taipei，預設：2026-10-21）",
+    )
+    sync_parser.add_argument(
+        "--slot",
+        choices=["all", "07:00", "11:30", "18:00"],
+        default="all",
+        help="指定要同步至 Notion 的時段（預設：all）",
+    )
+    sync_parser.add_argument(
+        "--output-dir",
+        default="artifacts/daily_production",
+        help="生產圖片所在根目錄（若尚未生產則自動先執行 produce_carousel_with_qa_retry）",
+    )
+
+    # 9. gui (Phase 4 Web Dashboard GUI)
+    gui_parser = sub.add_parser(
+        "gui",
+        help="啟動本機輕量級 Web 圖形化預覽與控制台介面 (預設 http://127.0.0.1:8765)",
+    )
+    gui_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="監聽位址（預設：127.0.0.1）",
+    )
+    gui_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="監聽埠號（預設：8765）",
     )
 
     return parser
@@ -404,6 +445,49 @@ def main(argv: list[str] | None = None) -> int:
                 "posts": produced_posts,
             }
             print(redact_sensitive(json.dumps(summary, ensure_ascii=False, indent=2)))
+            return 0
+
+        if args.command == "sync-notion":
+            slot_map = {
+                "07:00": [ContentSlot.MORNING_0700],
+                "11:30": [ContentSlot.NOON_1130],
+                "18:00": [ContentSlot.EVENING_1800],
+                "all": [
+                    ContentSlot.MORNING_0700,
+                    ContentSlot.NOON_1130,
+                    ContentSlot.EVENING_1800,
+                ],
+            }
+            target_slots = slot_map[args.slot]
+            out_base = Path(args.output_dir) / args.date
+            repo = PostStateRepository(settings.sqlite_db_path)
+            sync_service = NotionSyncService(settings=settings)
+
+            sync_results: list[dict[str, object]] = []
+            for s in target_slots:
+                slot_tag = s.value.split("_")[0].replace(":", "")
+                post_id = f"post-{args.date}-{slot_tag}"
+                pkg, _, zh_dir = produce_carousel_with_qa_retry(
+                    slot=s,
+                    post_id=post_id,
+                    scheduled_date_str=args.date,
+                    output_base_dir=out_base,
+                )
+                res = sync_service.sync_post_to_notion(pkg, zh_media_dir=zh_dir)
+                repo.upsert_post(pkg)
+                sync_results.append(res.model_dump())
+
+            output = {
+                "action": "sync-notion",
+                "target_date": args.date,
+                "synced_count": len(sync_results),
+                "results": sync_results,
+            }
+            print(redact_sensitive(json.dumps(output, ensure_ascii=False, indent=2)))
+            return 0
+
+        if args.command == "gui":
+            run_gui_server(host=args.host, port=args.port, settings=settings)
             return 0
 
     except AutotokSystemError as exc:

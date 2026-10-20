@@ -46,5 +46,10 @@
   - [x] 實作分離式場景底圖產生器（`SceneImageProvider`）與安全區越南文／繁體中文排版渲染器（`SlideTypographyRenderer`），同步輸出 `vi/` 與 `zh_tw/` 雙語六張 1080×1350 獨立 JPEG
   - [x] 實作視覺多樣性檢查與問題頁自動限次重製（Retry）機制，未達標標記 `QUALITY_FAILED`
   - [x] 新增 `produce-daily` CLI 命令、通過 [`tests/test_phase3.py`](tests/test_phase3.py) 測試並交付 [`PHASE3_REPORT.md`](PHASE3_REPORT.md)
-- [ ] **Phase 4**：整合 Notion 頁面六張圖同步、雲端持久化儲存與共享防重發資料庫、啟用排程工作流
+- [x] **Phase 4｜Notion 持久化圖片同步、排程防重發與本機 Web GUI（已完成並實機驗證）**
+  - [x] 實作 [`app/notion_sync.py`](app/notion_sync.py)：串接 Notion File Upload API 上傳 6 張越南文 JPEG + 6 張繁中對照 JPEG，完整寫入 Notion 13 個屬性欄位、頁面封面與內頁 6 張實體圖片區塊
+  - [x] 實機執行 `sync-notion` 將 `2026-10-21` 三個時段（07:00 / 11:30 / 18:00，共 36 張 1080×1350 JPEG）成功寫入線上 Notion 資料庫 `f1bc34396f154e62bca90c9deea19d7a`
+  - [x] 實作跨執行環境共享防重發查詢（`is_slot_already_published_or_locked_in_notion`）
+  - [x] 實作本機輕量級 Web GUI 預覽控制台（[`app/gui.py`](app/gui.py)，`uv run python -m app gui`）
+  - [x] 通過 [`tests/test_phase4.py`](tests/test_phase4.py) 測試並交付 [`PHASE4_REPORT.md`](PHASE4_REPORT.md)
 - [ ] **Phase 5**：實作 `AnalyticsAgent` 成效回收與每週權重調整報告
