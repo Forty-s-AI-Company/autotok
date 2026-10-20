@@ -31,9 +31,16 @@
 
 ---
 
-## Phase 2–5 待辦預覽（本次不提前實作）
+## Phase 2–5 待辦預覽與進度
 
-- [ ] **Phase 2**：讀取 Notion `4d575a73-4f98-4ff6-b3f8-da68c40c7125` 真實 Schema、實作 `ResearchProvider`、完成首輪 30–50 篇案例研究與 90 天去重
+- [x] **Phase 2｜研究 Agent 與內容庫（已完成核心開發與測試）**
+  - [x] 建立 12 組越南市場原始種子關鍵字與擴充機制（[`app/research.py`](app/research.py)、`seed-keywords` CLI）
+  - [x] 實作 `ResearchProvider`（`JsonFileResearchProvider` 真實案例載入與不足 30 篇誠實揭露、`MockResearchProvider` 35 篇批次樣本，且分離 `organic` 與 `ad`）
+  - [x] 實作完整互動率 vs. 部分互動率口徑計算（缺失欄位保留 `None`，絕不預設填 `0`）
+  - [x] 實作 35/25/20/10/10 選題研究性評分與 90 天內主題／URL 去重（`research-batch` CLI）
+  - [x] 實作 Notion 真實 Schema 唯讀探測與映射器（[`app/notion_schema.py`](app/notion_schema.py)、`inspect-notion` CLI）
+  - [x] 撰寫並通過 [`tests/test_phase2.py`](tests/test_phase2.py) 全部測試與交付 [`PHASE2_REPORT.md`](PHASE2_REPORT.md)、[`docs/RESEARCH_SCHEMA.md`](docs/RESEARCH_SCHEMA.md)
+  - [ ] 使用真實 `NOTION_TOKEN` 讀取線上 Notion 資料庫 `f1bc34396f154e62bca90c9deea19d7a`（狀態：`BLOCKED_NEEDS_AUTH`）
 - [ ] **Phase 3**：實作 AI 場景圖生成與分離式越南文字體排版渲染器、完成每日三時段六頁圖文產線
 - [ ] **Phase 4**：整合 Notion 頁面六張圖同步、雲端持久化儲存與共享防重發資料庫、啟用排程工作流
 - [ ] **Phase 5**：實作 `AnalyticsAgent` 成效回收與每週權重調整報告

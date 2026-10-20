@@ -17,6 +17,15 @@ from app.adapters import get_uploader_adapter
 from app.config import AppSettings, redact_sensitive
 from app.errors import AutotokSystemError
 from app.media import generate_mock_carousel_media, verify_carousel_directory
+from app.models import SourceType
+from app.notion_schema import NotionInspector
+from app.research import (
+    INITIAL_SEED_KEYWORDS,
+    JsonFileResearchProvider,
+    MockResearchProvider,
+    build_topic_opportunities_from_cases,
+    compute_engagement_metrics,
+)
 from app.state import PostStateRepository
 
 
@@ -93,6 +102,56 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="嘗試執行正式發布（必須同時設定環境變數 ALLOW_LIVE_PUBLISH=true 與有效憑證，否則會被安全攔截）",
+    )
+
+    # 4. seed-keywords (Phase 2)
+    kw_parser = sub.add_parser(
+        "seed-keywords",
+        help="初始化並列出越南市場搜尋關鍵字字典（MASTER_SPEC.md 第 5.2 節）",
+    )
+    kw_parser.add_argument(
+        "--add-vi",
+        default=None,
+        help="擴充新越南文關鍵字",
+    )
+    kw_parser.add_argument(
+        "--add-zh",
+        default=None,
+        help="擴充新關鍵字之繁體中文翻譯",
+    )
+    kw_parser.add_argument(
+        "--intent",
+        default="研究過程擴充之受眾搜尋意圖",
+        help="擴充關鍵字之搜尋意圖說明",
+    )
+
+    # 5. research-batch (Phase 2)
+    res_parser = sub.add_parser(
+        "research-batch",
+        help="執行批次市場研究（目標 30–50 篇，不足如實標示）、互動率口徑計算、90 天去重與主題機會評分",
+    )
+    res_parser.add_argument(
+        "--provider",
+        choices=["mock", "json_file"],
+        default="mock",
+        help="研究資料來源（mock 供測試，json_file 載入真實公開擷取案例）",
+    )
+    res_parser.add_argument(
+        "--input-file",
+        default=None,
+        help="當 --provider json_file 時，指定輸入之 JSON/JSONL 檔案路徑",
+    )
+    res_parser.add_argument(
+        "--max-cases",
+        type=int,
+        default=35,
+        help="單次批次研究上限（目標 30–50 篇，預設 35）",
+    )
+
+    # 6. inspect-notion (Phase 2)
+    sub.add_parser(
+        "inspect-notion",
+        help="唯讀探測既有 Notion 資料庫真實 Schema 與欄位映射（不修改或清除任何歷史資料）",
     )
 
     return parser
@@ -172,6 +231,105 @@ def main(argv: list[str] | None = None) -> int:
             repo.upsert_post(pkg)
 
             print(redact_sensitive(plan.model_dump_json(indent=2)))
+            return 0
+
+        if args.command == "seed-keywords":
+            repo = PostStateRepository(settings.sqlite_db_path)
+            repo.upsert_seed_keywords(INITIAL_SEED_KEYWORDS)
+            if args.add_vi and args.add_zh:
+                from app.models import SeedKeywordEntry
+
+                extra = SeedKeywordEntry(
+                    keyword_vi=args.add_vi.strip(),
+                    translation_zh_tw=args.add_zh.strip(),
+                    intent=args.intent.strip(),
+                    timeliness="trending",
+                    source="research_expanded",
+                )
+                repo.upsert_seed_keywords([extra])
+
+            all_keywords = repo.list_seed_keywords()
+            output = {
+                "action": "seed-keywords",
+                "total_count": len(all_keywords),
+                "keywords": [k.model_dump() for k in all_keywords],
+            }
+            print(redact_sensitive(json.dumps(output, ensure_ascii=False, indent=2)))
+            return 0
+
+        if args.command == "research-batch":
+            repo = PostStateRepository(settings.sqlite_db_path)
+            repo.upsert_seed_keywords(INITIAL_SEED_KEYWORDS)
+
+            if args.provider == "json_file":
+                if not args.input_file:
+                    print(
+                        json.dumps(
+                            {
+                                "error": "MISSING_INPUT_FILE",
+                                "message": "使用 --provider json_file 時必須提供 --input-file 路徑。",
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        file=sys.stderr,
+                    )
+                    return 2
+                provider = JsonFileResearchProvider(Path(args.input_file))
+            else:
+                provider = MockResearchProvider()
+
+            cases = provider.collect_cases(max_cases=args.max_cases)
+            existing_topics, existing_urls = repo.get_recent_topics_and_urls(days=90)
+
+            for c in cases:
+                repo.upsert_research_case(c)
+
+            opportunities = build_topic_opportunities_from_cases(
+                cases,
+                existing_topics_within_90d=existing_topics,
+                existing_case_urls_within_90d=existing_urls,
+            )
+            for opp in opportunities:
+                if opp.dedup_90d_passed:
+                    repo.upsert_topic_opportunity(opp)
+
+            organic_count = sum(1 for c in cases if c.source_type == SourceType.ORGANIC)
+            ad_count = sum(1 for c in cases if c.source_type == SourceType.AD)
+            metrics_samples = [
+                {
+                    "case_id": c.case_id,
+                    "source_type": c.source_type.value,
+                    "metrics": compute_engagement_metrics(c).model_dump(),
+                }
+                for c in cases[:5]
+            ]
+
+            target_met = 30 <= len(cases) <= 50
+            batch_summary = {
+                "action": "research-batch",
+                "provider": args.provider,
+                "is_mock_data": any(c.is_mock for c in cases),
+                "target_range": "30-50",
+                "actual_case_count": len(cases),
+                "target_range_met": target_met,
+                "shortfall_notice": (
+                    None
+                    if target_met
+                    else f"注意：本次真實可驗證案例數為 {len(cases)} 篇（未達 30–50 篇目標，依規範如實回報，不以假資料湊數）。"
+                ),
+                "organic_cases_count": organic_count,
+                "ad_samples_count_separated": ad_count,
+                "engagement_metrics_preview": metrics_samples,
+                "topic_opportunities": [opp.model_dump() for opp in opportunities],
+            }
+            print(redact_sensitive(json.dumps(batch_summary, ensure_ascii=False, indent=2)))
+            return 0
+
+        if args.command == "inspect-notion":
+            inspector = NotionInspector(settings=settings)
+            schema_report = inspector.fetch_database_schema()
+            print(redact_sensitive(schema_report.model_dump_json(indent=2)))
             return 0
 
     except AutotokSystemError as exc:
