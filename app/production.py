@@ -704,10 +704,17 @@ def produce_carousel_with_qa_retry(
 
     if use_codex_cli:
         codex_gen = codex_generator or ChatGPTCodexCliCarouselGenerator()
-        # 若目標目錄已經有完整 6 張越文與 6 張中文 JPEG（例如剛由 Codex 生成完成），直接驗證並包裝，避免重複耗時生成
+        raw_png_dir = vi_dir.parent / "raw_codex_png"
+        has_all_raw_png = all(
+            (raw_png_dir / f"vi_{i:02d}.png").is_file()
+            and (raw_png_dir / f"zh_{i:02d}.png").is_file()
+            for i in range(1, 7)
+        )
+        # 若目標目錄已經有完整 6 張 Codex 原生 PNG 與 6 張越文/中文 JPEG，直接驗證並包裝，避免重複耗時生成；
+        # 若僅有舊版 Pillow mock JPEG（無 raw_codex_png），則會自動觸發 Codex CLI 生成並覆蓋舊圖。
         existing_vi_ok = verify_carousel_directory(vi_dir, raise_on_error=False).passed
         existing_zh_ok = verify_carousel_directory(zh_dir, raise_on_error=False).passed
-        if not (existing_vi_ok and existing_zh_ok):
+        if not (has_all_raw_png and existing_vi_ok and existing_zh_ok):
             codex_gen.generate_slot_via_codex(
                 slot=slot,
                 vi_out_dir=vi_dir,
