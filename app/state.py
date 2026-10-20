@@ -17,6 +17,7 @@ from pathlib import Path
 
 from app.models import (
     CarouselPostPackage,
+    PostPerformanceObservation,
     PostStatus,
     ResearchCase,
     SeedKeywordEntry,
@@ -112,6 +113,25 @@ class PostStateRepository:
                     experiment_hypothesis TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS post_observations (
+                    observation_id TEXT PRIMARY KEY,
+                    post_id TEXT NOT NULL,
+                    slot TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    window_hours INTEGER NOT NULL,
+                    source_tier TEXT NOT NULL,
+                    views INTEGER,
+                    likes INTEGER,
+                    comments INTEGER,
+                    shares INTEGER,
+                    saves INTEGER,
+                    attributed_new_followers INTEGER,
+                    attribution_confidence TEXT NOT NULL,
+                    top_audience_regions_json TEXT NOT NULL,
+                    experiment_variant TEXT NOT NULL,
+                    is_mock INTEGER NOT NULL DEFAULT 0
                 );
                 """
             )
@@ -445,3 +465,90 @@ class PostStateRepository:
                 used_urls = {str(ur["source_url"]) for ur in url_rows}
 
         return topics, used_urls
+
+    # ==========================================================================
+    # Phase 5：發布後觀察期成效紀錄 (`post_observations`)
+    # ==========================================================================
+
+    def upsert_post_observation(self, obs: PostPerformanceObservation) -> None:
+        """儲存或更新貼文觀察期成效指標（缺失欄位保留 NULL，絕不預設填 0）。"""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO post_observations (
+                    observation_id, post_id, slot, observed_at, window_hours,
+                    source_tier, views, likes, comments, shares, saves,
+                    attributed_new_followers, attribution_confidence,
+                    top_audience_regions_json, experiment_variant, is_mock
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(observation_id) DO UPDATE SET
+                    post_id = excluded.post_id,
+                    slot = excluded.slot,
+                    observed_at = excluded.observed_at,
+                    window_hours = excluded.window_hours,
+                    source_tier = excluded.source_tier,
+                    views = excluded.views,
+                    likes = excluded.likes,
+                    comments = excluded.comments,
+                    shares = excluded.shares,
+                    saves = excluded.saves,
+                    attributed_new_followers = excluded.attributed_new_followers,
+                    attribution_confidence = excluded.attribution_confidence,
+                    top_audience_regions_json = excluded.top_audience_regions_json,
+                    experiment_variant = excluded.experiment_variant,
+                    is_mock = excluded.is_mock
+                """,
+                (
+                    obs.observation_id,
+                    obs.post_id,
+                    obs.slot.value,
+                    obs.observed_at,
+                    obs.window_hours,
+                    obs.source_tier.value,
+                    obs.views,
+                    obs.likes,
+                    obs.comments,
+                    obs.shares,
+                    obs.saves,
+                    obs.attributed_new_followers,
+                    obs.attribution_confidence.value,
+                    json.dumps(obs.top_audience_regions, ensure_ascii=False),
+                    obs.experiment_variant,
+                    1 if obs.is_mock else 0,
+                ),
+            )
+
+    def list_post_observations(
+        self, *, include_mock: bool = True
+    ) -> list[PostPerformanceObservation]:
+        """查詢已記錄之貼文觀察期成效清單。"""
+        query = "SELECT * FROM post_observations"
+        params: tuple[object, ...] = ()
+        if not include_mock:
+            query += " WHERE is_mock = 0"
+        query += " ORDER BY observed_at DESC, observation_id ASC"
+
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+
+        return [
+            PostPerformanceObservation(
+                observation_id=str(r["observation_id"]),
+                post_id=str(r["post_id"]),
+                slot=r["slot"],
+                observed_at=str(r["observed_at"]),
+                window_hours=int(r["window_hours"]),
+                source_tier=r["source_tier"],
+                views=r["views"],
+                likes=r["likes"],
+                comments=r["comments"],
+                shares=r["shares"],
+                saves=r["saves"],
+                attributed_new_followers=r["attributed_new_followers"],
+                attribution_confidence=r["attribution_confidence"],
+                top_audience_regions=json.loads(r["top_audience_regions_json"]),
+                experiment_variant=str(r["experiment_variant"]),
+                is_mock=bool(r["is_mock"]),
+            )
+            for r in rows
+        ]

@@ -266,3 +266,98 @@ class PublishExecutionPlan(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     next_actions: list[str] = Field(default_factory=list)
     executed_at: datetime = Field(default_factory=datetime.now)
+
+
+class AnalyticsSourceTier(StrEnum):
+    """成效指標資料來源層級（對應 MASTER_SPEC.md 第 4, 11 節：嚴格區分後台可驗證、公開與估計）。"""
+
+    CREATOR_BACKEND_VERIFIED = "creator_backend_verified"
+    PUBLIC_OBSERVED = "public_observed"
+    ESTIMATED_OR_UNVERIFIED = "estimated_or_unverified"
+    MOCK_SIMULATION = "mock_simulation"
+
+
+class AttributionConfidence(StrEnum):
+    """自身新增粉絲歸因可信度等級（對應 MASTER_SPEC.md 第 5.4, 11 節）。"""
+
+    DIRECT_POST_ATTRIBUTION = "direct_post_attribution"
+    TIME_WINDOW_CORRELATION = "time_window_correlation"
+    UNAVAILABLE = "unavailable"
+
+
+class PostPerformanceObservation(BaseModel):
+    """貼文發布後觀察期成效紀錄（對應 MASTER_SPEC.md 第 7, 11 節 `post_observations`）。
+
+    嚴格規範：
+    - 缺失指標保留為 `None`，嚴禁預設填 `0`。
+    - 明確標註 `source_tier`（創作者後台可驗證 / 公開數據 / 估計或模擬）與 `attribution_confidence`。
+    """
+
+    observation_id: str = Field(description="觀察紀錄唯一識別碼")
+    post_id: str = Field(description="關聯之貼文 ID (`content_posts.post_id`)")
+    slot: ContentSlot = Field(default=ContentSlot.NOON_1130, description="貼文發布時段")
+    observed_at: str = Field(description="指標擷取時間 ISO 字串")
+    window_hours: int = Field(default=24, ge=1, description="發布後觀察視窗小時數（如 24h / 72h / 168h）")
+    source_tier: AnalyticsSourceTier = Field(
+        default=AnalyticsSourceTier.PUBLIC_OBSERVED,
+        description="資料來源層級（區分後台驗證、公開數據、估計與模擬）",
+    )
+    views: int | None = Field(default=None, ge=0, description="觀看數（缺失保留 None，禁止預設填 0）")
+    likes: int | None = Field(default=None, ge=0, description="按讚數（缺失保留 None）")
+    comments: int | None = Field(default=None, ge=0, description="留言數（缺失保留 None）")
+    shares: int | None = Field(default=None, ge=0, description="分享數（缺失保留 None）")
+    saves: int | None = Field(default=None, ge=0, description="收藏數（缺失保留 None）")
+    attributed_new_followers: int | None = Field(
+        default=None, ge=0, description="新增粉絲數（無歸因資料時必為 None）"
+    )
+    attribution_confidence: AttributionConfidence = Field(
+        default=AttributionConfidence.UNAVAILABLE,
+        description="新增粉絲歸因可信度",
+    )
+    top_audience_regions: dict[str, float] = Field(
+        default_factory=dict,
+        description="受眾地區分佈比例（例如 {'TW': 0.68, 'VN': 0.27}，僅後台數據可得）",
+    )
+    experiment_variant: str = Field(
+        default="A_LIST_HOOK",
+        description="A/B 實驗變體代號（如 A_LIST_HOOK 數字清單鉤子 vs. B_STORY_HOOK 情境故事鉤子）",
+    )
+    is_mock: bool = Field(default=False, description="是否為離線模擬數據")
+
+
+class SlotPerformanceSummary(BaseModel):
+    """單一時段／主題分類之表現彙整。"""
+
+    slot: ContentSlot
+    post_count: int
+    full_rate_post_count: int
+    partial_rate_post_count: int
+    avg_full_engagement_rate: float | None = Field(
+        default=None, description="完整互動率平均值（僅針對具備完整讚/留言/分享/觀看之貼文計算）"
+    )
+    avg_save_share_ratio: float | None = Field(
+        default=None, description="平均（收藏+分享）/觀看比率"
+    )
+    verified_new_followers_total: int = Field(
+        default=0, description="具 DIRECT_POST_ATTRIBUTION 之累積新增粉絲數"
+    )
+    correlated_new_followers_total: int = Field(
+        default=0, description="僅具時窗相關性（TIME_WINDOW_CORRELATION）之新增粉絲數（不混入直接歸因）"
+    )
+
+
+class WeightAdjustmentProposal(BaseModel):
+    """下週選題研究權重與 A/B 實驗調整建議（MASTER_SPEC.md 第 4, 5.4, 11 節）。"""
+
+    report_id: str
+    generated_at: str
+    current_weights: dict[str, float]
+    proposed_weights: dict[str, float]
+    rationale: list[str]
+    slot_summaries: list[SlotPerformanceSummary]
+    ab_test_summary: dict[str, object]
+    next_week_experiments: list[str]
+    is_based_on_mock: bool = Field(
+        default=True,
+        description="是否基於模擬數據（若為 True 則僅供演練，不宣稱為真實帳號營運結論）",
+    )

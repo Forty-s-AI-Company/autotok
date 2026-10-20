@@ -18,6 +18,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+from app.analytics import AnalyticsAgent
 from app.config import AppSettings
 from app.state import PostStateRepository
 
@@ -27,6 +28,9 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
     repo = PostStateRepository(settings.sqlite_db_path)
     keywords = repo.list_seed_keywords()
     cases = repo.list_research_cases(days=90)
+    observations = repo.list_post_observations(include_mock=True)
+    analytics_agent = AnalyticsAgent()
+    opt_proposal = analytics_agent.generate_weekly_optimization_proposal(observations)
 
     # 掃描 artifacts/daily_production 下已生成的貼文目錄
     prod_root = project_root / "artifacts" / "daily_production"
@@ -237,6 +241,10 @@ def render_dashboard_html(project_root: Path, settings: AppSettings) -> str:
     <div class="stat-box">
       <div class="stat-label">搜尋字典 / 研究案例庫</div>
       <div class="stat-value">{len(keywords)} 個關鍵字 / {len(cases)} 篇案例</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Phase 5 觀察樣本 / 建議權重</div>
+      <div class="stat-value">{len(observations)} 筆觀察 ｜ 領先變體：{html.escape(str(opt_proposal.ab_test_summary.get('recommended_lead_variant') or 'N/A'))}</div>
     </div>
   </section>
 

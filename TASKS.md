@@ -52,4 +52,8 @@
   - [x] 實作跨執行環境共享防重發查詢（`is_slot_already_published_or_locked_in_notion`）
   - [x] 實作本機輕量級 Web GUI 預覽控制台（[`app/gui.py`](app/gui.py)，`uv run python -m app gui`）
   - [x] 通過 [`tests/test_phase4.py`](tests/test_phase4.py) 測試並交付 [`PHASE4_REPORT.md`](PHASE4_REPORT.md)
-- [ ] **Phase 5**：實作 `AnalyticsAgent` 成效回收與每週權重調整報告
+- [x] **Phase 5｜成效回饋與優化（已完成核心開發與測試）**
+  - [x] 實作 [`app/analytics.py`](app/analytics.py)：`AnalyticsAgent` 支援資料來源分級（`CREATOR_BACKEND_VERIFIED` / `PUBLIC_OBSERVED` / `MOCK_SIMULATION`）、完整與部分互動率口徑分離、以及新增粉絲歸因可信度分級（`DIRECT_POST_ATTRIBUTION` vs. `TIME_WINDOW_CORRELATION`）
+  - [x] 實作 SQLite `post_observations` 持久化表（[`app/state.py`](app/state.py)，缺失指標保留 `NULL` 不預設填 `0`）
+  - [x] 實作三時段主題表現對照、A/B 封面鉤子實驗評估與下週選題研究權重微調建議（`analytics-report` CLI）
+  - [x] 通過 [`tests/test_phase5.py`](tests/test_phase5.py) 測試（全專案共 31 項測試全數通過）並交付 [`PHASE5_REPORT.md`](PHASE5_REPORT.md)

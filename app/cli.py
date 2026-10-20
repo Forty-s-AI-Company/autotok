@@ -14,6 +14,11 @@ import sys
 from pathlib import Path
 
 from app.adapters import get_uploader_adapter
+from app.analytics import (
+    AnalyticsAgent,
+    build_mock_observations_fixture,
+    load_observations_from_json,
+)
 from app.config import AppSettings, redact_sensitive
 from app.errors import AutotokSystemError
 from app.gui import run_gui_server
@@ -241,6 +246,28 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8765,
         help="監聽埠號（預設：8765）",
+    )
+
+    # 10. analytics-report (Phase 5)
+    analytics_parser = sub.add_parser(
+        "analytics-report",
+        help="執行 Phase 5 成效回饋分析、增粉歸因可信度分級與下週選題評分權重優化報告",
+    )
+    analytics_parser.add_argument(
+        "--mode",
+        choices=["mock", "json", "db"],
+        default="mock",
+        help="成效來源模式：mock（載入離線演練樣本）、json（從 --input-json 載入）、db（僅分析 SQLite 既有紀錄）",
+    )
+    analytics_parser.add_argument(
+        "--input-json",
+        default=None,
+        help="當 --mode json 時，指定輸入之成效觀察 JSON 檔案路徑",
+    )
+    analytics_parser.add_argument(
+        "--output-md",
+        default="artifacts/analytics/weekly_optimization_report.md",
+        help="輸出的繁體中文 Markdown 優化報告路徑",
     )
 
     return parser
@@ -526,6 +553,42 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "gui":
             run_gui_server(host=args.host, port=args.port, settings=settings)
+            return 0
+
+        if args.command == "analytics-report":
+            repo = PostStateRepository(settings.sqlite_db_path)
+            if args.mode == "mock":
+                obs_list = build_mock_observations_fixture()
+                for o in obs_list:
+                    repo.upsert_post_observation(o)
+            elif args.mode == "json":
+                if not args.input_json:
+                    raise AutotokSystemError(
+                        "使用 --mode json 時必須提供 --input-json 路徑",
+                        code="MISSING_INPUT_JSON",
+                    )
+                obs_list = load_observations_from_json(Path(args.input_json))
+                for o in obs_list:
+                    repo.upsert_post_observation(o)
+            else:
+                obs_list = repo.list_post_observations(include_mock=True)
+
+            agent = AnalyticsAgent()
+            proposal = agent.generate_weekly_optimization_proposal(obs_list)
+            md_report = agent.render_markdown_report(proposal)
+
+            out_md_path = Path(args.output_md)
+            out_md_path.parent.mkdir(parents=True, exist_ok=True)
+            out_md_path.write_text(md_report, encoding="utf-8")
+
+            summary = {
+                "action": "analytics-report",
+                "mode": args.mode,
+                "observations_analyzed": len(obs_list),
+                "output_markdown_path": str(out_md_path),
+                "proposal": json.loads(proposal.model_dump_json()),
+            }
+            print(redact_sensitive(json.dumps(summary, ensure_ascii=False, indent=2)))
             return 0
 
     except AutotokSystemError as exc:
