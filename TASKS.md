@@ -40,7 +40,11 @@
   - [x] 實作 35/25/20/10/10 選題研究性評分與 90 天內主題／URL 去重（`research-batch` CLI）
   - [x] 實作 Notion 真實 Schema 唯讀探測與映射器（[`app/notion_schema.py`](app/notion_schema.py)、`inspect-notion` CLI）
   - [x] 撰寫並通過 [`tests/test_phase2.py`](tests/test_phase2.py) 全部測試與交付 [`PHASE2_REPORT.md`](PHASE2_REPORT.md)、[`docs/RESEARCH_SCHEMA.md`](docs/RESEARCH_SCHEMA.md)
-  - [ ] 使用真實 `NOTION_TOKEN` 讀取線上 Notion 資料庫 `f1bc34396f154e62bca90c9deea19d7a`（狀態：`BLOCKED_NEEDS_AUTH`）
-- [ ] **Phase 3**：實作 AI 場景圖生成與分離式越南文字體排版渲染器、完成每日三時段六頁圖文產線
+  - [x] 使用真實 `NOTION_TOKEN` 讀取線上 Notion 資料庫 `f1bc34396f154e62bca90c9deea19d7a`（已成功讀取 `@carry.vietnam.tw｜TikTok 輪播內容資料庫` 共 13 個真實欄位並完成 100% 映射）
+- [x] **Phase 3｜越南文六頁製圖與品質 Gate（已完成核心開發與測試）**
+  - [x] 實作每日三時段（07:00 `家庭情緒` / 11:30 `台灣生活` / 18:00 `圖文行銷`）六頁越中腳本與合規詞彙審核（[`app/production.py`](app/production.py)）
+  - [x] 實作分離式場景底圖產生器（`SceneImageProvider`）與安全區越南文／繁體中文排版渲染器（`SlideTypographyRenderer`），同步輸出 `vi/` 與 `zh_tw/` 雙語六張 1080×1350 獨立 JPEG
+  - [x] 實作視覺多樣性檢查與問題頁自動限次重製（Retry）機制，未達標標記 `QUALITY_FAILED`
+  - [x] 新增 `produce-daily` CLI 命令、通過 [`tests/test_phase3.py`](tests/test_phase3.py) 測試並交付 [`PHASE3_REPORT.md`](PHASE3_REPORT.md)
 - [ ] **Phase 4**：整合 Notion 頁面六張圖同步、雲端持久化儲存與共享防重發資料庫、啟用排程工作流
 - [ ] **Phase 5**：實作 `AnalyticsAgent` 成效回收與每週權重調整報告

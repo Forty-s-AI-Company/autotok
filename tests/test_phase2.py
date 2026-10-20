@@ -243,10 +243,10 @@ def test_notion_inspector_blocks_without_token_and_parses_real_schema() -> None:
 
     assert report.title == "TikTok 越南市場內容庫"
     assert len(report.properties) == 5
-    assert "post_title" in report.recommended_mapping
+    assert "post_title_zh" in report.recommended_mapping
     assert "status" in report.recommended_mapping
-    assert "scheduled_at" in report.recommended_mapping
-    assert "cover_or_media" in report.recommended_mapping
+    assert "scheduled_date" in report.recommended_mapping
+    assert "vi_carousel_images" in report.recommended_mapping
 
 
 def test_phase2_cli_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

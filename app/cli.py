@@ -17,8 +17,9 @@ from app.adapters import get_uploader_adapter
 from app.config import AppSettings, redact_sensitive
 from app.errors import AutotokSystemError
 from app.media import generate_mock_carousel_media, verify_carousel_directory
-from app.models import SourceType
+from app.models import ContentSlot, SourceType
 from app.notion_schema import NotionInspector
+from app.production import produce_carousel_with_qa_retry
 from app.research import (
     INITIAL_SEED_KEYWORDS,
     JsonFileResearchProvider,
@@ -152,6 +153,28 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "inspect-notion",
         help="唯讀探測既有 Notion 資料庫真實 Schema 與欄位映射（不修改或清除任何歷史資料）",
+    )
+
+    # 7. produce-daily (Phase 3)
+    prod_parser = sub.add_parser(
+        "produce-daily",
+        help="執行每日三時段（07:00 / 11:30 / 18:00）越南文六頁輪播製圖、繁中對照圖渲染與品質 Gate 重試管線",
+    )
+    prod_parser.add_argument(
+        "--date",
+        default="2026-10-21",
+        help="目標發布日期 YYYY-MM-DD（Asia/Taipei，預設：2026-10-21）",
+    )
+    prod_parser.add_argument(
+        "--slot",
+        choices=["all", "07:00", "11:30", "18:00"],
+        default="all",
+        help="指定生產時段（all 代表一次生產隔日三篇共 18 張越文圖 + 18 張中文對照圖）",
+    )
+    prod_parser.add_argument(
+        "--output-dir",
+        default="artifacts/daily_production",
+        help="輸出根目錄（預設：artifacts/daily_production）",
     )
 
     return parser
@@ -330,6 +353,57 @@ def main(argv: list[str] | None = None) -> int:
             inspector = NotionInspector(settings=settings)
             schema_report = inspector.fetch_database_schema()
             print(redact_sensitive(schema_report.model_dump_json(indent=2)))
+            return 0
+
+        if args.command == "produce-daily":
+            slot_map = {
+                "07:00": [ContentSlot.MORNING_0700],
+                "11:30": [ContentSlot.NOON_1130],
+                "18:00": [ContentSlot.EVENING_1800],
+                "all": [
+                    ContentSlot.MORNING_0700,
+                    ContentSlot.NOON_1130,
+                    ContentSlot.EVENING_1800,
+                ],
+            }
+            target_slots = slot_map[args.slot]
+            out_base = Path(args.output_dir) / args.date
+            repo = PostStateRepository(settings.sqlite_db_path)
+
+            produced_posts: list[dict[str, object]] = []
+            for s in target_slots:
+                slot_tag = s.value.split("_")[0].replace(":", "")
+                post_id = f"post-{args.date}-{slot_tag}"
+                pkg, qa_report, zh_dir = produce_carousel_with_qa_retry(
+                    slot=s,
+                    post_id=post_id,
+                    scheduled_date_str=args.date,
+                    output_base_dir=out_base,
+                )
+                repo.upsert_post(pkg)
+                produced_posts.append(
+                    {
+                        "post_id": pkg.post_id,
+                        "slot": pkg.slot.value,
+                        "scheduled_at_taipei": pkg.scheduled_at_taipei,
+                        "vi_title": pkg.vi_title,
+                        "zh_tw_title": pkg.zh_tw_title,
+                        "hashtags": pkg.hashtags,
+                        "vi_media_dir": str(pkg.media_dir),
+                        "zh_reference_media_dir": str(zh_dir),
+                        "qa_passed": qa_report.passed,
+                        "slide_count": qa_report.actual_count,
+                        "status": pkg.status.value,
+                    }
+                )
+
+            summary = {
+                "action": "produce-daily",
+                "target_date": args.date,
+                "posts_produced": len(produced_posts),
+                "posts": produced_posts,
+            }
+            print(redact_sensitive(json.dumps(summary, ensure_ascii=False, indent=2)))
             return 0
 
     except AutotokSystemError as exc:

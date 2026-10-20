@@ -28,6 +28,7 @@ data/*.db-journal
 data/*.db-wal
 artifacts/mock_media/
 artifacts/manual_exports/
+artifacts/daily_production/
 artifacts/logs/
 
 # OS

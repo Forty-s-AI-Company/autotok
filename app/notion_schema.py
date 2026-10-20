@@ -24,6 +24,7 @@ class NotionPropertySchema(BaseModel):
     name: str
     prop_id: str
     prop_type: str
+    options: list[str] = Field(default_factory=list, description="若為 select / status 欄位，列出實際可用選項")
 
 
 class NotionSchemaInspectionReport(BaseModel):
@@ -110,24 +111,35 @@ class NotionInspector:
         raw_props: dict[str, dict[str, Any]] = payload.get("properties", {})
         props: list[NotionPropertySchema] = []
         for name, meta in raw_props.items():
+            ptype = str(meta.get("type", "unknown"))
+            opts: list[str] = []
+            if ptype in {"select", "status", "multi_select"}:
+                type_obj = meta.get(ptype) or {}
+                opts = [str(o.get("name", "")) for o in type_obj.get("options", []) if o.get("name")]
             props.append(
                 NotionPropertySchema(
                     name=name,
                     prop_id=str(meta.get("id", "")),
-                    prop_type=str(meta.get("type", "unknown")),
+                    prop_type=ptype,
+                    options=opts,
                 )
             )
         props.sort(key=lambda p: p.name.lower())
 
-        # 僅在真實存在的欄位中尋找相容型別，不強行假設欄位名稱
+        # 根據真實存在的欄位名稱與型別進行精準映射（絕不猜測不存在的欄位）
         system_requirements: dict[str, tuple[set[str], list[str]]] = {
-            "post_title": ({"title"}, ["name", "title", "標題", "主題", "tiêu đề"]),
-            "status": ({"status", "select"}, ["status", "狀態", "發布狀態", "state"]),
-            "scheduled_at": ({"date"}, ["date", "scheduled", "預定時間", "發布時間", "排程時間", "time"]),
-            "slot_category": ({"select", "multi_select"}, ["category", "slot", "分類", "時段", "主題分類"]),
-            "hashtags": ({"multi_select", "rich_text"}, ["hashtags", "tags", "標籤", "hashtag"]),
-            "cover_or_media": ({"files"}, ["files", "media", "圖片", "封面", "輪播圖", "images"]),
-            "source_or_post_url": ({"url"}, ["url", "link", "連結", "網址", "tiktok url"]),
+            "post_title_zh": ({"title"}, ["主題", "name", "title", "標題"]),
+            "post_title_vi": ({"rich_text"}, ["越南文標題", "tiêu đề"]),
+            "status": ({"status", "select"}, ["狀態", "status", "發布狀態", "state"]),
+            "scheduled_date": ({"date"}, ["發布日期", "預定時間", "發布時間", "排程時間", "date", "scheduled"]),
+            "time_slot": ({"select"}, ["時段", "slot", "time"]),
+            "slot_category": ({"select", "multi_select"}, ["分類", "category", "主題分類"]),
+            "core_angle": ({"rich_text"}, ["核心切角", "切角", "angle"]),
+            "cta_text": ({"rich_text"}, ["cta"]),
+            "vi_carousel_images": ({"files"}, ["越南文圖片", "輪播圖"]),
+            "zh_reference_images": ({"files"}, ["中文版圖片"]),
+            "has_zh_translation": ({"checkbox"}, ["中文對照"]),
+            "tiktok_post_url": ({"url"}, ["tiktok連結", "tiktok url", "url", "link"]),
         }
 
         recommended_mapping: dict[str, str] = {}
@@ -138,7 +150,17 @@ class NotionInspector:
             for p in props:
                 if p.prop_type in allowed_types:
                     lower_name = p.name.lower()
-                    if any(kw in lower_name for kw in keywords) or p.prop_type == "title":
+                    if any(kw in lower_name for kw in keywords):
+                        matched_prop = f"{p.name} ({p.prop_type})"
+                        break
+            if not matched_prop and "files" in allowed_types:
+                for p in props:
+                    if p.prop_type == "files" and f"{p.name} ({p.prop_type})" not in recommended_mapping.values():
+                        matched_prop = f"{p.name} ({p.prop_type})"
+                        break
+            if not matched_prop and "title" in allowed_types:
+                for p in props:
+                    if p.prop_type == "title":
                         matched_prop = f"{p.name} ({p.prop_type})"
                         break
             if matched_prop:
