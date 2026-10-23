@@ -4,10 +4,10 @@
 """
 
 import json
-from http.server import BaseHTTPRequestHandler
+import urllib.error
 import urllib.parse
 import urllib.request
-import urllib.error
+from http.server import BaseHTTPRequestHandler
 
 CLIENT_KEY = "sbaw5hpgnruu6rk1zy"
 CLIENT_SECRET = "0N2ycDTtUESn3Q6eXbptBr0Y7K1LJG6W"
