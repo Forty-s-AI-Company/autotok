@@ -234,7 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
     # 9. gui (Phase 4 Web Dashboard GUI)
     gui_parser = sub.add_parser(
         "gui",
-        help="啟動本機輕量級 Web 圖形化預覽與控制台介面 (預設 http://127.0.0.1:8765)",
+        help="啟動本機輕量級 Web 圖形化預覽與控制台介面 (預設 http://127.0.0.1:31026)",
     )
     gui_parser.add_argument(
         "--host",
@@ -244,8 +244,8 @@ def build_parser() -> argparse.ArgumentParser:
     gui_parser.add_argument(
         "--port",
         type=int,
-        default=8765,
-        help="監聽埠號（預設：8765）",
+        default=31026,
+        help="監聽埠號（預設：31026）",
     )
 
     # 9b. scheduler（由系統排程每 10 分鐘呼叫 tick）

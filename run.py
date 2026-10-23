@@ -2,7 +2,7 @@
 """啟動本機操作台：雙擊 `啟動控制台.command`（macOS）或 `啟動控制台.bat`（Windows）即可。
 
 - 已經有一個新版操作台在跑：直接打開瀏覽器到它，不重複啟動。
-- 預設的 8765 埠被別的程式（例如舊版）佔用：自動改用下一個空的埠，並打開瀏覽器到新位址。
+- 預設的 31026 埠被別的程式（例如舊版）佔用：自動改用下一個空的埠，並打開瀏覽器到新位址。
 命令列工具請用 `uv run autotok-vn --help`。
 """
 
@@ -36,7 +36,7 @@ def is_autotok(host: str, port: int) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="啟動 AutoTok 本機操作台")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=31026)
     parser.add_argument("--no-browser", action="store_true", help="不自動開啟瀏覽器")
     args = parser.parse_args()
 

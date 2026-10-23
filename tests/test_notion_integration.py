@@ -102,7 +102,7 @@ def test_oauth_state_is_single_use() -> None:
 def test_oauth_authorize_url_and_exchange() -> None:
     settings = AppSettings(NOTION_CLIENT_ID="cid", NOTION_CLIENT_SECRET="sec")
     url = oauth.build_authorize_url(settings, "st")
-    assert "client_id=cid" in url and "state=st" in url and "127.0.0.1%3A8765" in url
+    assert "client_id=cid" in url and "state=st" in url and "127.0.0.1%3A31026" in url
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"].startswith("Basic ")

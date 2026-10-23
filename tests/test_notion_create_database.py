@@ -187,7 +187,7 @@ def test_parent_page_search_and_panel_copy(tmp_path: Path) -> None:
 def test_unconnected_panel_shows_oauth_setup_steps(tmp_path: Path) -> None:
     app = create_app(tmp_path, AppSettings(SQLITE_DB_PATH=tmp_path / "w.db", NOTION_TOKEN=""), allowed_hosts={"testserver"})
     html = TestClient(app).get(f"/notion/panel?account_id={ACCOUNT}").text
-    assert "notion.so/profile/integrations" in html and "http://127.0.0.1:8765/notion/oauth/callback" in html
+    assert "notion.so/profile/integrations" in html and "http://127.0.0.1:31026/notion/oauth/callback" in html
     assert "讀取內容" in html and "插入內容" in html and "NOTION_CLIENT_SECRET" in html
     assert "貼上 Token" in html and "連線" in html
 

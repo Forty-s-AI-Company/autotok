@@ -15,7 +15,7 @@ TikTok 多帳號輪播圖與文案的研究、製作、審稿與發布工作台�
 ```bash
 uv sync
 cp -n .env.example .env
-uv run python run.py          # 開啟 http://127.0.0.1:8765
+uv run python run.py          # 開啟 http://127.0.0.1:31026
 ```
 
 macOS 可雙擊 `啟動控制台.command`，Windows 雙擊 `啟動控制台.bat`。

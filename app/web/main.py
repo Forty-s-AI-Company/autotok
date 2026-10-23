@@ -112,7 +112,7 @@ def run_server(
     settings: AppSettings | None = None,
     *,
     host: str = "127.0.0.1",
-    port: int = 8765,
+    port: int = 31026,
     open_browser: bool = True,
 ) -> None:
     if host not in security.LOCAL_HOSTS:

@@ -57,7 +57,7 @@ class AppSettings(BaseSettings):
     image_host_sync_dir: str = Field(default="", alias="IMAGE_HOST_SYNC_DIR")
     # 需與 TikTok Developer Portal 登記的 Redirect URI 完全一致（localhost 是否被接受尚未實測）
     tiktok_redirect_uri: str = Field(
-        default="http://127.0.0.1:8765/tiktok/oauth/callback", alias="TIKTOK_REDIRECT_URI"
+        default="http://127.0.0.1:31026/tiktok/oauth/callback", alias="TIKTOK_REDIRECT_URI"
     )
 
     # ChatGPT / Codex CLI 模型設定（預設使用高性價比主力模型 gpt-6-sol）
@@ -79,7 +79,7 @@ class AppSettings(BaseSettings):
     notion_client_id: str = Field(default="", alias="NOTION_CLIENT_ID")
     notion_client_secret: str = Field(default="", alias="NOTION_CLIENT_SECRET")
     notion_redirect_uri: str = Field(
-        default="http://127.0.0.1:8765/notion/oauth/callback", alias="NOTION_REDIRECT_URI"
+        default="http://127.0.0.1:31026/notion/oauth/callback", alias="NOTION_REDIRECT_URI"
     )
     notion_data_source_id: str = Field(
         default="4d575a73-4f98-4ff6-b3f8-da68c40c7125", alias="NOTION_DATA_SOURCE_ID"
