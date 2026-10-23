@@ -19,7 +19,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.config import AppSettings
-from app.engines import find_codex_bin
+from app.engines import find_codex_bin, run_codex_cmd
 from app.errors import AutotokSystemError
 from app.markets import MarketProfile
 from app.models import MAX_SLIDE_COUNT, MIN_SLIDE_COUNT
@@ -293,7 +293,7 @@ Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 
 
 def _run_subprocess(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=600)
+    return run_codex_cmd(cmd, timeout=600)
 
 
 class CodexCliEditorialProvider(EditorialProvider):

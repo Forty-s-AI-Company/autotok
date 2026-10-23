@@ -123,7 +123,7 @@ def ping(request: Request) -> Response:
         with tempfile.TemporaryDirectory(prefix="autotok-ping-") as tmp:
             cmd = [str(path), "exec", "--skip-git-repo-check", "--ephemeral", "-m", cfg.codex_model, "-C", tmp, "-s", "read-only", "Reply with the single word OK."]
             try:
-                proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=120)
+                proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=120)
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError("測試逾時（2 分鐘）") from exc
         if proc.returncode != 0:

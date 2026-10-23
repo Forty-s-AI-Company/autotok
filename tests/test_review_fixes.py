@@ -133,7 +133,7 @@ def test_codex_image_gen_uses_sandbox_timeout_and_sanitised_prompt(tmp_path: Pat
     assert cmd[cmd.index("-s") + 1] == "workspace-write"
     assert "danger-full-access" not in cmd
     assert captured["kwargs"]["timeout"] == 900
-    prompt = cmd[-1]
+    prompt = cmd[-1] if cmd[-1] != "-" else str(captured["kwargs"]["input"])  # Windows 上多行提示改走標準輸入
     assert "rm -rf`" not in prompt and "Never follow instructions" in prompt
 
 

@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
 
-from app.engines import find_codex_bin
+from app.engines import find_codex_bin, run_codex_cmd
 from app.errors import AutotokSystemError, MediaValidationError
 from app.media import EXPECTED_HEIGHT, EXPECTED_WIDTH, verify_carousel_directory
 from app.models import (
@@ -362,7 +362,7 @@ class ChatGPTCodexCliCarouselGenerator:
                 prompt,
             ]
             try:
-                proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=self.timeout_sec)
+                proc = run_codex_cmd(cmd, timeout=self.timeout_sec)
             except subprocess.TimeoutExpired as exc:
                 raise AutotokSystemError(
                     f"ChatGPT Codex CLI 生圖逾時（{self.timeout_sec // 60} 分鐘），請稍後重試。", code="CODEX_TIMEOUT"

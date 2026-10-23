@@ -67,8 +67,20 @@ class EngineError(RuntimeError):
 Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 
 
+def run_codex_cmd(cmd: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+    """執行 Codex CLI。Windows 上 codex 是 .CMD 包裝檔，命令列引數遇到換行會被截斷，
+    所以含換行的提示（最後一個引數）改由標準輸入傳入（`codex exec -`）。"""
+    stdin_text = None
+    if os.name == "nt" and cmd and "\n" in cmd[-1]:
+        stdin_text = cmd[-1]
+        cmd = [*cmd[:-1], "-"]
+    return subprocess.run(
+        cmd, input=stdin_text, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=timeout
+    )
+
+
 def _default_runner(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
+    return run_codex_cmd(cmd, timeout=30)
 
 
 def parse_model_catalog(raw: str) -> list[ModelInfo]:

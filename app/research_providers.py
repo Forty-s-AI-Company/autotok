@@ -33,7 +33,7 @@ from typing import Any
 import httpx
 
 from app.config import AppSettings
-from app.engines import find_codex_bin
+from app.engines import find_codex_bin, run_codex_cmd
 from app.markets import MarketProfile
 from app.models import EvidenceLevel, ResearchCase, SourceType
 from app.research import MockResearchProvider, ResearchProvider
@@ -336,7 +336,7 @@ class LlmWebSearchProvider(SourceProvider):
                 "-m", self.settings.codex_model, "-C", tmp, "-o", str(out_file), prompt,
             ]  # fmt: skip
             runner = self._codex_runner or (
-                lambda c: subprocess.run(c, capture_output=True, text=True, check=False, timeout=self.timeout_sec)
+                lambda c: run_codex_cmd(c, timeout=self.timeout_sec)
             )
             proc = runner(cmd)
             if proc.returncode != 0:
