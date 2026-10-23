@@ -97,7 +97,7 @@ def connect(request: Request, account_id: str = Form(...)) -> Response:
         return toast(Response(status_code=200), "找不到帳號", "err")
     try:
         state = _states(request).issue(account_id)
-        url = _client(request).build_authorize_url(state)
+        url = _client(request).build_authorize_url(state, _states(request).verifier(state))
     except AutotokSystemError as exc:
         return toast(Response(status_code=200), str(exc), "err")
     resp = Response(status_code=200)
@@ -107,13 +107,14 @@ def connect(request: Request, account_id: str = Form(...)) -> Response:
 
 @router.get("/tiktok/oauth/callback")
 def callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = "") -> Response:
-    account_id = _states(request).consume(state) if state else None
-    if account_id is None:
+    taken = _states(request).take(state) if state else None
+    if taken is None:
         return RedirectResponse("/settings?tiktok=state_invalid#tiktok", status_code=303)
+    account_id, code_verifier = taken
     if error or not code:
         return RedirectResponse("/settings?tiktok=denied#tiktok", status_code=303)
     try:
-        tokens = _client(request).exchange_code(code)
+        tokens = _client(request).exchange_code(code, code_verifier)
         _save(request, account_id, tokens)
     except AutotokSystemError:
         return RedirectResponse(f"/settings?account={account_id}&tiktok=failed#tiktok", status_code=303)

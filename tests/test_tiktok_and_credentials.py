@@ -56,7 +56,12 @@ def _mock(username: str, options: list[str]) -> httpx.MockTransport:
 
 
 def _client(tmp_path: Path, transport: httpx.MockTransport) -> TestClient:
-    cfg = AppSettings(SQLITE_DB_PATH=tmp_path / "t.db", TIKTOK_CLIENT_KEY="ck", TIKTOK_CLIENT_SECRET="cs")
+    cfg = AppSettings(
+        SQLITE_DB_PATH=tmp_path / "t.db",
+        TIKTOK_CLIENT_KEY="ck",
+        TIKTOK_CLIENT_SECRET="cs",
+        TIKTOK_REDIRECT_URI="http://127.0.0.1:31026/tiktok/oauth/callback",  # 不受本機 .env 影響
+    )
     app = create_app(tmp_path, cfg, allowed_hosts={"testserver"})
     app.state.tiktok_transport = transport
     c = TestClient(app, follow_redirects=False)

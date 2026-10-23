@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import threading
@@ -61,7 +62,7 @@ class OAuthStates:
     """單次使用、有時效的 OAuth state（記憶體內）。"""
 
     def __init__(self) -> None:
-        self._items: dict[str, tuple[str, float]] = {}
+        self._items: dict[str, tuple[str, float, str]] = {}
         self._lock = threading.Lock()
 
     def issue(self, account_id: str) -> str:
@@ -69,8 +70,22 @@ class OAuthStates:
         with self._lock:
             now = time.time()
             self._items = {k: v for k, v in self._items.items() if now - v[1] < _STATE_TTL}
-            self._items[state] = (account_id, now)
+            self._items[state] = (account_id, now, secrets.token_urlsafe(48))
         return state
+
+    def verifier(self, state: str) -> str:
+        """PKCE code_verifier（不消耗 state）；找不到回傳空字串。"""
+        with self._lock:
+            item = self._items.get(state)
+        return item[2] if item else ""
+
+    def take(self, state: str) -> tuple[str, str] | None:
+        """消耗 state，回傳 (account_id, code_verifier)；無效或逾時回傳 None。"""
+        with self._lock:
+            item = self._items.pop(state, None)
+        if item is None or time.time() - item[1] >= _STATE_TTL:
+            return None
+        return item[0], item[2]
 
     def consume(self, state: str) -> str | None:
         with self._lock:
@@ -89,7 +104,7 @@ class TikTokClient:
         if not self.settings.tiktok_client_key.strip() or not self.settings.tiktok_client_secret.strip():
             raise BlockedNeedsAuthError("尚未設定 TIKTOK_CLIENT_KEY 與 TIKTOK_CLIENT_SECRET（TikTok Developer Portal 的 App 憑證）。")
 
-    def build_authorize_url(self, state: str) -> str:
+    def build_authorize_url(self, state: str, code_verifier: str = "") -> str:
         self._require_app()
         params = {
             "client_key": self.settings.tiktok_client_key,
@@ -98,6 +113,10 @@ class TikTokClient:
             "redirect_uri": self.settings.tiktok_redirect_uri,
             "state": state,
         }
+        if code_verifier:
+            # TikTok 的 PKCE：code_challenge 是 code_verifier 的 SHA-256「十六進位」摘要（不是 base64url）
+            params["code_challenge"] = hashlib.sha256(code_verifier.encode("ascii")).hexdigest()
+            params["code_challenge_method"] = "S256"
         return f"{AUTHORIZE_URL}?{urlencode(params)}"
 
     def _post(self, url: str, **kwargs: object) -> dict[str, object]:
@@ -113,6 +132,8 @@ class TikTokClient:
         if r.status_code >= 400 or (isinstance(data.get("error"), dict) and data["error"].get("code") not in (None, "ok")):
             err = data.get("error") if isinstance(data.get("error"), dict) else {}
             msg = str(err.get("message") or data.get("error_description") or r.text[:200])
+            if err.get("code"):
+                msg = f"[{err['code']}] {msg}"  # TikTok 的錯誤代碼（例如 url_ownership_unverified）才是排查依據
             if r.status_code in (401, 403):
                 raise BlockedNeedsAuthError(f"TikTok 拒絕授權：{msg}")
             raise AutotokSystemError(f"TikTok API 錯誤（{r.status_code}）：{msg}", code="TIKTOK_API")
@@ -128,18 +149,18 @@ class TikTokClient:
             open_id=str(data.get("open_id", "")),
         )
 
-    def exchange_code(self, code: str) -> TikTokTokens:
+    def exchange_code(self, code: str, code_verifier: str = "") -> TikTokTokens:
         self._require_app()
-        data = self._post(
-            TOKEN_URL,
-            data={
-                "client_key": self.settings.tiktok_client_key,
-                "client_secret": self.settings.tiktok_client_secret,
-                "code": code,
-                "grant_type": "authorization_code",
-                "redirect_uri": self.settings.tiktok_redirect_uri,
-            },
-        )
+        body = {
+            "client_key": self.settings.tiktok_client_key,
+            "client_secret": self.settings.tiktok_client_secret,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": self.settings.tiktok_redirect_uri,
+        }
+        if code_verifier:
+            body["code_verifier"] = code_verifier
+        data = self._post(TOKEN_URL, data=body)
         return self._tokens_from(data)
 
     def refresh(self, refresh_token: str) -> TikTokTokens:
