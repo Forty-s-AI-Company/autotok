@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -77,11 +78,129 @@ class SyncDirImageHost(ImageHost):
         shutil.rmtree(self.sync_dir / post_id, ignore_errors=True)
 
 
+GitRunner = Callable[[list[str], Path], "subprocess.CompletedProcess[str]"]
+
+
+def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=120
+    )
+
+
+class GitPushImageHost(SyncDirImageHost):
+    """同步資料夾位在靜態站 git repo 內：複製 → commit → push → 輪詢到圖片網址真的上線才回傳。
+
+    TikTok 的 PULL_FROM_URL 在 init 當下就會去抓圖，所以一定要等部署完成。網址必須回 200、
+    內容類型是 image/*、大小與本機檔案一致（靜態站找不到檔案時常回 200 的錯誤頁，不能只看狀態碼）。
+    只 commit 這篇貼文的資料夾（pathspec），不會帶到工作目錄的其他改動。
+    """
+
+    def __init__(
+        self,
+        sync_dir: Path,
+        url_prefix: str,
+        *,
+        branch: str = "main",
+        wait_sec: float = 300,
+        poll_sec: float = 10,
+        git: GitRunner = _run_git,
+        transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        super().__init__(sync_dir, url_prefix)
+        self.branch = branch
+        self.wait_sec = wait_sec
+        self.poll_sec = poll_sec
+        self._git = git
+        self._repo_root: Path | None = None
+        self._transport = transport
+        self._sleep = sleep
+        self._clock = clock
+
+    def _root(self) -> Path:
+        if self._repo_root is None:
+            self.sync_dir.mkdir(parents=True, exist_ok=True)
+            proc = self._git(["rev-parse", "--show-toplevel"], self.sync_dir)
+            if proc.returncode != 0 or not (proc.stdout or "").strip():
+                detail = (proc.stderr or proc.stdout or "").strip()[-300:]
+                raise AutotokSystemError(f"圖片託管資料夾不在 git repo 內：{detail}", code="IMAGE_HOST_GIT")
+            self._repo_root = Path(proc.stdout.strip()).resolve()
+        return self._repo_root
+
+    def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
+        # 一律在 repo 根目錄執行，pathspec 才會以根目錄為準
+        return self._git(list(args), self._root())
+
+    def _ok(self, *args: str, hint: str = "") -> str:
+        proc = self._run(*args)
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()[-300:]
+            raise AutotokSystemError(f"圖片託管的 git {args[0]} 失敗：{detail}{hint}", code="IMAGE_HOST_GIT")
+        return (proc.stdout or "").strip()
+
+    def _publish_paths(self, rel: str, message: str) -> None:
+        self._ok("add", "-A", "--", rel)
+        if not self._ok("status", "--porcelain", "--", rel):
+            return  # 沒有變更（例如內容與上次相同）
+        self._ok("commit", "-m", message, "--", rel)
+        self._ok("push", "origin", self.branch, hint="（遠端可能有新的 commit，請先在專案資料夾 git pull 再重試）")
+
+    def _rel(self, post_id: str) -> str:
+        return (self.sync_dir / post_id).resolve().relative_to(self._root()).as_posix()
+
+    def upload(self, post_id: str, files: list[Path]) -> list[str]:
+        current = self._ok("rev-parse", "--abbrev-ref", "HEAD")
+        if current != self.branch:
+            raise AutotokSystemError(
+                f"圖片託管需要在 {self.branch} 分支上推送（目前在 {current}），否則網站不會部署到正式網域", code="IMAGE_HOST_GIT"
+            )
+        urls = super().upload(post_id, files)
+        self._publish_paths(self._rel(post_id), f"chore(media): 發布暫存圖片 {post_id}")
+        self._wait_until_live(urls, [f.stat().st_size for f in files])
+        return urls
+
+    def _wait_until_live(self, urls: list[str], sizes: list[int]) -> None:
+        deadline = self._clock() + self.wait_sec
+        pending = list(zip(urls, sizes, strict=True))
+        with httpx.Client(transport=self._transport, timeout=20, follow_redirects=True) as client:
+            while True:
+                still = []
+                for url, size in pending:
+                    try:
+                        r = client.get(url)
+                        live = r.status_code == 200 and r.headers.get("content-type", "").startswith("image/") and len(r.content) == size
+                    except httpx.HTTPError:
+                        live = False
+                    if not live:
+                        still.append((url, size))
+                pending = still
+                if not pending:
+                    return
+                if self._clock() >= deadline:
+                    names = ", ".join(u.rsplit("/", 1)[-1] for u, _ in pending)
+                    raise AutotokSystemError(
+                        f"圖片推送後 {int(self.wait_sec)} 秒內仍打不開（{names}）。請檢查網站部署狀態；沒有通知 TikTok。",
+                        code="IMAGE_HOST_TIMEOUT",
+                    )
+                self._sleep(self.poll_sec)
+
+    def cleanup(self, post_id: str) -> None:
+        """刪除圖片並再推一次。盡力而為：失敗只留下圖片，不能影響已經完成的發布結果，所以絕不丟例外。"""
+        try:
+            super().cleanup(post_id)
+            self._publish_paths(self._rel(post_id), f"chore(media): 移除暫存圖片 {post_id}")
+        except Exception:  # noqa: BLE001
+            return
+
+
 def image_host_from_settings(settings: AppSettings) -> ImageHost | None:
     prefix = settings.tiktok_verified_image_url_prefix.strip()
     folder = settings.image_host_sync_dir.strip()
     if not prefix or not folder or not prefix.startswith("https://"):
         return None
+    if settings.image_host_git_push:
+        return GitPushImageHost(Path(folder).expanduser(), prefix, branch=settings.image_host_git_branch.strip() or "main")
     return SyncDirImageHost(Path(folder).expanduser(), prefix)
 
 

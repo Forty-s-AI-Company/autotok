@@ -55,6 +55,9 @@ class AppSettings(BaseSettings):
     tiktok_app_audited: bool = Field(default=False, alias="TIKTOK_APP_AUDITED")
     # 圖片託管：發布時把圖片複製到這個資料夾，由使用者負責把它發佈到已驗證的網域（對應 TIKTOK_VERIFIED_IMAGE_URL_PREFIX）
     image_host_sync_dir: str = Field(default="", alias="IMAGE_HOST_SYNC_DIR")
+    # 同步資料夾位在靜態站的 git repo 內時，發布前自動 commit、push 並等圖片網址上線（push 的分支需是部署用分支）
+    image_host_git_push: bool = Field(default=False, alias="IMAGE_HOST_GIT_PUSH")
+    image_host_git_branch: str = Field(default="main", alias="IMAGE_HOST_GIT_BRANCH")
     # 需與 TikTok Developer Portal 登記的 Redirect URI 完全一致（localhost 是否被接受尚未實測）
     tiktok_redirect_uri: str = Field(
         default="http://127.0.0.1:31026/tiktok/oauth/callback", alias="TIKTOK_REDIRECT_URI"
