@@ -13,6 +13,9 @@ CLIENT_KEY = "sbaw5hpgnruu6rk1zy"
 CLIENT_SECRET = "0N2ycDTtUESn3Q6eXbptBr0Y7K1LJG6W"
 REDIRECT_URI = "https://autotok.carry-digital-nomad.in.net/api/auth/callback"
 BASE_DOMAIN = "https://autotok.carry-digital-nomad.in.net"
+# 本機操作台（run.py）的授權回呼。TikTok 後台不收 localhost / 127.0.0.1，
+# 所以登記公開的 /api/tiktok/callback，再由這裡把 code、state 轉回本機；目標固定，不接受外部指定。
+LOCAL_TIKTOK_CALLBACK = "http://127.0.0.1:31026/tiktok/oauth/callback"
 
 SLIDES = [
     f"{BASE_DOMAIN}/slides/slide_01.jpg",
@@ -47,6 +50,17 @@ class handler(BaseHTTPRequestHandler):
         # 考慮 Vercel rewrite 傳入的 __path
         custom_path = query_params.get("__path", [""])[0]
         req_path = f"{path}/{custom_path}"
+
+        # 0. 本機操作台的授權回呼轉址（不經過伺服器換 token）
+        if "tiktok/callback" in req_path:
+            forward = urllib.parse.urlencode(
+                [(k, v) for k, v in urllib.parse.parse_qsl(parsed_url.query) if k != "__path"]
+            )
+            self.send_response(302)
+            self.send_header("Location", LOCAL_TIKTOK_CALLBACK + (f"?{forward}" if forward else ""))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
 
         # 1. 登入轉址
         if "auth/login" in req_path:
