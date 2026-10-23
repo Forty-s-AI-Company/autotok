@@ -8,6 +8,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from html import escape as esc
 from http.server import BaseHTTPRequestHandler
 
 # Client Key 會出現在每個授權網址裡，不是機密；Client Secret 只從 Vercel 環境變數讀取，不寫進程式碼。
@@ -93,8 +94,8 @@ class handler(BaseHTTPRequestHandler):
 <style>body{{font-family:sans-serif;max-width:600px;margin:50px auto;padding:20px;line-height:1.6;}}</style>
 </head><body>
 <h2 style="color:#e53e3e;">❌ 授權失敗</h2>
-<p>錯誤代碼: {error}</p>
-<p>錯誤說明: {error_desc}</p>
+<p>錯誤代碼: {esc(error)}</p>
+<p>錯誤說明: {esc(error_desc)}</p>
 <p><a href="/api/auth/login">重新授權</a></p>
 </body></html>"""
                 self._send_html(400, html)
@@ -130,13 +131,18 @@ class handler(BaseHTTPRequestHandler):
                     token_json = json.loads(resp_body)
             except urllib.error.HTTPError as e:
                 err_text = e.read().decode("utf-8", errors="ignore")
-                self._send_html(500, f"<h2>Token 交換失敗</h2><pre>{err_text}</pre>")
+                self._send_html(500, f"<h2>Token 交換失敗</h2><pre>{esc(err_text)}</pre>")
                 return
             except Exception as e:
-                self._send_html(500, f"<h2>連線錯誤</h2><p>{str(e)}</p>")
+                self._send_html(500, f"<h2>連線錯誤</h2><p>{esc(str(e))}</p>")
                 return
 
             access_token = token_json.get("access_token", "")
+            if not access_token:
+                # TikTok 以 200 回傳錯誤 JSON（例如授權碼無效）時，不能當作成功
+                detail = esc(json.dumps(token_json, ensure_ascii=False, indent=2))
+                self._send_html(400, f"<h2>授權失敗：TikTok 沒有回傳 access token</h2><pre>{detail}</pre><p><a href=\"/api/auth/login\">重新授權</a></p>")
+                return
             open_id = token_json.get("open_id", "")
             expires_in = token_json.get("expires_in", 0)
 
@@ -162,10 +168,10 @@ class handler(BaseHTTPRequestHandler):
     <h1>🎉 TikTok 授權成功！</h1>
     <div class="card">
         <h3>授權資訊</h3>
-        <p><strong>Open ID:</strong> {open_id}</p>
-        <p><strong>有效期限:</strong> {expires_in} 秒</p>
+        <p><strong>Open ID:</strong> {esc(str(open_id))}</p>
+        <p><strong>有效期限:</strong> {esc(str(expires_in))} 秒</p>
         <p><strong>Access Token:</strong></p>
-        <div class="token-box">{access_token}</div>
+        <div class="token-box">{esc(access_token)}</div>
     </div>
 
     <div class="card">
@@ -179,7 +185,7 @@ class handler(BaseHTTPRequestHandler):
         </div>
         <br>
         <form action="/api/publish" method="POST">
-            <input type="hidden" name="token" value="{access_token}">
+            <input type="hidden" name="token" value="{esc(access_token, quote=True)}">
             <button type="submit">🚀 立即發布一則照片輪播到 @carry.vietnam.tw</button>
         </form>
     </div>
@@ -250,11 +256,11 @@ class handler(BaseHTTPRequestHandler):
             except urllib.error.HTTPError as e:
                 err_text = e.read().decode("utf-8", errors="ignore")
                 self._send_html(500, f"""<!DOCTYPE html><html><body style="font-family:sans-serif;background:#0f172a;color:#fff;padding:40px;">
-                    <h2 style="color:#ef4444;">發布失敗</h2><pre style="background:#1e293b;padding:16px;border-radius:8px;">{err_text}</pre>
+                    <h2 style="color:#ef4444;">發布失敗</h2><pre style="background:#1e293b;padding:16px;border-radius:8px;">{esc(err_text)}</pre>
                 </body></html>""")
                 return
             except Exception as e:
-                self._send_html(500, f"<h2>發布連線錯誤</h2><p>{str(e)}</p>")
+                self._send_html(500, f"<h2>發布連線錯誤</h2><p>{esc(str(e))}</p>")
                 return
 
             publish_id = result_json.get("data", {}).get("publish_id", "未知")
@@ -275,9 +281,9 @@ class handler(BaseHTTPRequestHandler):
     <h1>🎉 貼文發布請求成功！</h1>
     <div class="card">
         <h3>TikTok 伺服器已成功接收任務</h3>
-        <p><strong>Publish ID:</strong> <code>{publish_id}</code></p>
+        <p><strong>Publish ID:</strong> <code>{esc(str(publish_id))}</code></p>
         <p>狀態回傳：</p>
-        <pre>{json.dumps(result_json, ensure_ascii=False, indent=2)}</pre>
+        <pre>{esc(json.dumps(result_json, ensure_ascii=False, indent=2))}</pre>
         <br>
         <p>請打開您的手機 TikTok App 或至帳號查看最新照片輪播貼文！</p>
     </div>
