@@ -4,13 +4,15 @@
 """
 
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler
 
-CLIENT_KEY = "sbaw5hpgnruu6rk1zy"
-CLIENT_SECRET = "0N2ycDTtUESn3Q6eXbptBr0Y7K1LJG6W"
+# Client Key 會出現在每個授權網址裡，不是機密；Client Secret 只從 Vercel 環境變數讀取，不寫進程式碼。
+CLIENT_KEY = os.environ.get("TIKTOK_CLIENT_KEY", "sbaw5hpgnruu6rk1zy")
+CLIENT_SECRET = os.environ.get("TIKTOK_CLIENT_SECRET", "")
 REDIRECT_URI = "https://autotok.carry-digital-nomad.in.net/api/auth/callback"
 BASE_DOMAIN = "https://autotok.carry-digital-nomad.in.net"
 # 本機操作台（run.py）的授權回呼。TikTok 後台不收 localhost / 127.0.0.1，
@@ -100,6 +102,10 @@ class handler(BaseHTTPRequestHandler):
 
             if not code:
                 self._send_html(400, "<h2>未收到授權碼 (Code)</h2>")
+                return
+
+            if not CLIENT_SECRET:
+                self._send_html(500, "<h2>伺服器尚未設定 TIKTOK_CLIENT_SECRET 環境變數</h2>")
                 return
 
             # 向 TikTok 交換 Token
