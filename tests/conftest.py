@@ -19,3 +19,4 @@ def _isolate_credentials(tmp_path_factory: pytest.TempPathFactory, monkeypatch: 
 def _never_push_images(monkeypatch: pytest.MonkeyPatch) -> None:
     # 環境變數優先於 .env；避免本機啟用自動 push 後，測試對真實的 git repo 與網站動手
     monkeypatch.setenv("IMAGE_HOST_GIT_PUSH", "false")
+    monkeypatch.setenv("ALLOW_LIVE_PUBLISH", "false")  # 本機 .env 開啟真實發布時，測試也不能受影響
