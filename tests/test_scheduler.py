@@ -310,3 +310,23 @@ def test_cli_dry_run_lists_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     out = capsys.readouterr().out
     assert "研究爆款案例" in out and "製作" in out
     assert not repo.list_jobs(limit=5)
+
+
+def test_pick_topic_skips_compliance_flagged_cases(tmp_path: Path) -> None:
+    """自動挑題目沒有人工把關：收入、簽證這類需合規審核的案例不能被自動挑走，只留給手動送去製作。"""
+    from app.research_providers import ImportProvider
+    from app.research_service import refit_account
+
+    repo = PostStateRepository(tmp_path / "t.db")
+    market = repo.get_market_profile("carry-vietnam-tw")
+    rows = (
+        '[{"url": "https://www.tiktok.com/@a/video/1", "title": "Kiếm tiền dễ hơn Việt Nam khi sống ở Đài Loan", "likes": "20K", "narrative_category": "comparison_carousel"},'
+        ' {"url": "https://www.tiktok.com/@b/video/2", "title": "4 điều nhỏ nên biết khi sống ở Đài Loan", "likes": "1K", "narrative_category": "practical_checklist"}]'
+    )
+    for c in ImportProvider(market, rows).collect_cases():
+        repo.upsert_research_case(c)
+    fits = {f.case_id: f for f in refit_account(repo, "carry-vietnam-tw", market)}
+    flagged = [f for f in fits.values() if f.flag == "需合規審核"]
+    assert len(flagged) == 1  # 收入比較被標為需合規審核
+    topic, _ = pick_topic(repo, "carry-vietnam-tw", market, SLOT_KINDS[1], min_fit=0)
+    assert topic is not None and "Kiếm tiền" not in topic.title_vi

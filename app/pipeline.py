@@ -14,7 +14,7 @@ from app.editorial import (
     get_editorial_provider,
 )
 from app.errors import AutotokSystemError, MediaValidationError
-from app.fit import CaseFit
+from app.fit import FLAG_AD, FLAG_COMPLIANCE, CaseFit
 from app.markets import MarketProfile
 from app.models import CarouselPostPackage, ContentSlot, PostStatus, TopicCandidateStatus, TopicOpportunity
 from app.notion_sync import NotionSyncService
@@ -160,6 +160,8 @@ def pick_topic(
         row = stored.get(c.case_id)
         if row is None or float(row["score"]) < min_fit:  # type: ignore[arg-type]
             continue
+        if str(row["flag"] or "") in (FLAG_COMPLIANCE, FLAG_AD):
+            continue  # 自動挑選沒有人工把關：需合規審核或廣告樣本只能由人手動送去製作
         match = 0 if str(row["recommended_slot"]) == slot.value else 1
         ranked.append((match, -float(row["score"]), c))  # type: ignore[arg-type]
     ranked.sort(key=lambda t: (t[0], t[1]))

@@ -35,6 +35,7 @@ _SENSITIVE_TERMS = (
     "visa", "thị thực", "gia hạn", "arc", "lương", "chuyển tiền", "môi giới", "vay", "cư trú",
     "วีซ่า", "เงินเดือน", "โอนเงิน", "นายหน้า", "resident", "salary", "wage", "remittance", "broker", "loans",
     "invest", "investing", "investment", "gaji", "kirim uang", "pinjaman",
+    "收入", "月入", "賺錢", "kiếm tiền", "kiếm được", "thu nhập", "income", "earn money", "pendapatan",
 )  # fmt: skip
 
 _COUNTRY_TERMS = {
