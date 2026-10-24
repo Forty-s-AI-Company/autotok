@@ -26,6 +26,7 @@ accounts/
 data/*.db
 data/*.db-journal
 data/*.db-wal
+data/scheduler.lock
 artifacts/mock_media/
 artifacts/manual_exports/
 artifacts/daily_production/
