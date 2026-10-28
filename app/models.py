@@ -46,6 +46,7 @@ class PostStatus(StrEnum):
     SCHEDULED = "SCHEDULED"
     PUBLISHING = "PUBLISHING"
     PUBLISHED = "PUBLISHED"
+    SENT_TO_INBOX = "SENT_TO_INBOX"  # 已傳到 TikTok 收件匣草稿，等使用者在 App 內按下發布
     FAILED = "FAILED"
     UNKNOWN = "UNKNOWN"
     BLOCKED_NEEDS_AUTH = "BLOCKED_NEEDS_AUTH"

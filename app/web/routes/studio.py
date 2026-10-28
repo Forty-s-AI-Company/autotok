@@ -30,7 +30,7 @@ from app.web.ui import render, toast
 
 router = APIRouter()
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-LOCKED_STATUSES = {PostStatus.SCHEDULED, PostStatus.PUBLISHING, PostStatus.PUBLISHED}
+LOCKED_STATUSES = {PostStatus.SCHEDULED, PostStatus.PUBLISHING, PostStatus.PUBLISHED, PostStatus.SENT_TO_INBOX}
 
 ENGINES = {
     "codex": "Codex 生圖＋即時文案",

@@ -46,6 +46,7 @@ POST_STATUS_TO_NOTION_STATUS: dict[PostStatus, str] = {
     PostStatus.SCHEDULED: "已排程",
     PostStatus.PUBLISHING: "已排程",
     PostStatus.PUBLISHED: "已發布",
+    PostStatus.SENT_TO_INBOX: "已排程",  # 還沒公開；Notion 沒有「收件匣」選項，沿用「已排程」
     PostStatus.FAILED: "發布失敗",
     PostStatus.QUALITY_FAILED: "發布失敗",
     PostStatus.UNKNOWN: "已排程",

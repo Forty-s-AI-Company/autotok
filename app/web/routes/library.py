@@ -24,6 +24,7 @@ STATUS_LABEL = {
     PostStatus.SCHEDULED: ("已排程", "ok"),
     PostStatus.PUBLISHING: ("發布中", ""),
     PostStatus.PUBLISHED: ("已發布", "ok"),
+    PostStatus.SENT_TO_INBOX: ("已傳到收件匣，待你在 App 發布", "warn"),
     PostStatus.FAILED: ("發布失敗", "err"),
     PostStatus.UNKNOWN: ("狀態未知", "warn"),
     PostStatus.BLOCKED_NEEDS_AUTH: ("需要授權", "warn"),
@@ -59,7 +60,7 @@ def library(request: Request, status: str = "") -> HTMLResponse:
     active = repo.get_active_account()
     artifacts_root = request.app.state.project_root / "artifacts"
     posts = repo.list_posts(account_id=active.account_id)
-    groups = {"待處理": {PostStatus.READY_TO_REVIEW, PostStatus.QUALITY_FAILED, PostStatus.DRAFT, PostStatus.RESEARCHED, PostStatus.GENERATING, PostStatus.UNKNOWN, PostStatus.BLOCKED_NEEDS_AUTH}, "可發布": {PostStatus.READY, PostStatus.SCHEDULED, PostStatus.PUBLISHING}, "已發布": {PostStatus.PUBLISHED}, "失敗": {PostStatus.FAILED}}
+    groups = {"待處理": {PostStatus.READY_TO_REVIEW, PostStatus.QUALITY_FAILED, PostStatus.DRAFT, PostStatus.RESEARCHED, PostStatus.GENERATING, PostStatus.UNKNOWN, PostStatus.BLOCKED_NEEDS_AUTH}, "可發布": {PostStatus.READY, PostStatus.SCHEDULED, PostStatus.PUBLISHING}, "已發布": {PostStatus.PUBLISHED, PostStatus.SENT_TO_INBOX}, "失敗": {PostStatus.FAILED}}
     counts = {name: sum(1 for p in posts if p.status in members) for name, members in groups.items()}
     if status in groups:
         posts = [p for p in posts if p.status in groups[status]]

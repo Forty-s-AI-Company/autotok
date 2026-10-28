@@ -53,6 +53,8 @@ class AppSettings(BaseSettings):
         default="", alias="TIKTOK_VERIFIED_IMAGE_URL_PREFIX"
     )
     tiktok_app_audited: bool = Field(default=False, alias="TIKTOK_APP_AUDITED")
+    # direct：直接發布（未審核只能僅自己可見）；inbox：傳到 TikTok 收件匣草稿，由使用者在 App 內按下發布與選隱私
+    tiktok_post_mode: Literal["direct", "inbox"] = Field(default="direct", alias="TIKTOK_POST_MODE")
     # 圖片託管：發布時把圖片複製到這個資料夾，由使用者負責把它發佈到已驗證的網域（對應 TIKTOK_VERIFIED_IMAGE_URL_PREFIX）
     image_host_sync_dir: str = Field(default="", alias="IMAGE_HOST_SYNC_DIR")
     # 同步資料夾位在靜態站的 git repo 內時，發布前自動 commit、push 並等圖片網址上線（push 的分支需是部署用分支）

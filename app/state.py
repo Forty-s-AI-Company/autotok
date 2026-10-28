@@ -506,7 +506,7 @@ class PostStateRepository:
     def acquire_publish_lock(self, post_id: str, runner_id: str) -> bool:
         """嘗試取得指定 post_id 的發布鎖；若已被其他執行器鎖定或狀態為 UNKNOWN/PUBLISHED 則拒絕。"""
         current_status = self.get_post_status(post_id)
-        if current_status in {PostStatus.PUBLISHED, PostStatus.PUBLISHING, PostStatus.UNKNOWN}:
+        if current_status in {PostStatus.PUBLISHED, PostStatus.SENT_TO_INBOX, PostStatus.PUBLISHING, PostStatus.UNKNOWN}:
             return False
 
         now_iso = datetime.now(UTC).isoformat()

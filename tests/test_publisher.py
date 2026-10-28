@@ -223,3 +223,40 @@ def test_network_drop_on_init_is_unknown_not_failed(env) -> None:
     out = publish_post(repo, cfg, ACC, PID, transport=httpx.MockTransport(handler), sleep=lambda s: None)
     assert out.status == "failed" and "UNKNOWN" in out.detail
     assert repo.get_post_status(PID) == PostStatus.UNKNOWN
+
+
+# ---------- 收件匣模式（MEDIA_UPLOAD）：傳到草稿，由使用者在 TikTok App 內發布 ----------
+
+
+def test_inbox_mode_sends_draft_without_privacy_and_never_claims_published(env) -> None:
+    repo, cfg, sync_dir = env
+    cfg.tiktok_post_mode = "inbox"
+    rec = Recorder(statuses=[{"status": "PROCESSING_DOWNLOAD"}, {"status": "SEND_TO_USER_INBOX"}])
+    out, rec = run(env, rec)
+    assert out.status == "inbox" and "收件匣" in out.detail and "AI 生成內容" in out.detail
+    init_body = next(b for p, b in rec.calls if p.endswith("/content/init/"))
+    assert init_body["post_mode"] == "MEDIA_UPLOAD"
+    assert set(init_body["post_info"]) == {"title", "description"}  # 隱私、留言、音樂、AI 標示都由使用者在 App 內選
+    assert init_body["source_info"]["photo_images"][0].startswith("https://cdn.example.com/m/")
+    assert "creator_info" not in rec.paths()  # 收件匣模式不需要檢查隱私選項
+    assert repo.get_post_status(PID) == PostStatus.SENT_TO_INBOX  # 不是 PUBLISHED：還沒公開
+    assert not (sync_dir / PID).exists()
+    assert repo.acquire_publish_lock(PID, "x") is False  # 已送出，不可重複送
+
+
+def test_inbox_mode_blocks_resend_and_dry_run_reports_plan(env) -> None:
+    repo, cfg, _ = env
+    cfg.tiktok_post_mode = "inbox"
+    out, rec = run(env, dry_run=True)
+    assert out.status == "exported" and "收件匣" in out.detail and rec.calls == []
+    repo.update_status(PID, PostStatus.SENT_TO_INBOX)
+    out, rec = run(env)
+    assert out.status == "blocked" and rec.calls == []
+
+
+def test_inbox_mode_failure_is_reported(env) -> None:
+    repo, cfg, _ = env
+    cfg.tiktok_post_mode = "inbox"
+    out, _ = run(env, Recorder(statuses=[{"status": "FAILED", "fail_reason": "photo_pull_failed"}]))
+    assert out.status == "failed" and "photo_pull_failed" in out.detail
+    assert repo.get_post_status(PID) == PostStatus.FAILED

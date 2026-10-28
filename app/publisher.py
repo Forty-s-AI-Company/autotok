@@ -30,12 +30,12 @@ from app.state import PostStateRepository
 TITLE_LIMIT = 90
 DESCRIPTION_LIMIT = 4000
 POLL_DELAYS = (3, 5, 10, 15, 20, 30, 30, 30, 30, 30)  # 秒；總計約 3 分鐘，狀態端點每分鐘上限 30 次
-LOCKED_STATUSES = {PostStatus.PUBLISHED, PostStatus.PUBLISHING, PostStatus.UNKNOWN}
+LOCKED_STATUSES = {PostStatus.PUBLISHED, PostStatus.SENT_TO_INBOX, PostStatus.PUBLISHING, PostStatus.UNKNOWN}
 
 
 @dataclass(frozen=True)
 class PublishOutcome:
-    # exported 已匯出發布包｜published 已公開發布｜private 已發布為僅自己可見｜blocked 被閘門擋下｜failed 失敗
+    # exported 已匯出發布包｜published 已公開發布｜private 已發布為僅自己可見｜inbox 已傳到 TikTok 收件匣草稿｜blocked 被閘門擋下｜failed 失敗
     status: str
     detail: str
     export_dir: str = ""
@@ -226,6 +226,21 @@ def build_payload(pkg: CarouselPostPackage, urls: list[str], privacy_level: str)
     }
 
 
+def build_inbox_payload(pkg: CarouselPostPackage, urls: list[str]) -> dict[str, object]:
+    """傳到收件匣（MEDIA_UPLOAD）：只帶標題與說明；隱私、留言、音樂、AI 生成標示都由使用者在 TikTok App 內自己選。"""
+    description = f"{pkg.vi_caption}\n\n{' '.join(pkg.hashtags)}"
+    return {
+        "media_type": "PHOTO",
+        "post_mode": "MEDIA_UPLOAD",
+        "post_info": {"title": pkg.vi_title[:TITLE_LIMIT], "description": description[:DESCRIPTION_LIMIT]},
+        "source_info": {"source": "PULL_FROM_URL", "photo_cover_index": 0, "photo_images": urls},
+    }
+
+
+INBOX_DONE_STATES = {"SEND_TO_USER_INBOX", "PUBLISH_COMPLETE"}
+INBOX_HINT = "已傳到 TikTok 收件匣草稿。請到手機 TikTok App 的通知或收件匣完成發布；發布時請自己選隱私，並開啟「AI 生成內容」標示。"
+
+
 def _export(settings: AppSettings, pkg: CarouselPostPackage, dry_run: bool, reason: str) -> PublishOutcome:
     plan = get_uploader_adapter("manual_export", settings).publish_carousel(pkg, dry_run=dry_run)
     prefix = "（dry-run）會匯出發布包" if dry_run else "已匯出發布包"
@@ -276,8 +291,11 @@ def publish_post(
 
     # 未通過審核的 App 一律只能 SELF_ONLY
     want = "PUBLIC_TO_EVERYONE" if (cap == "public" and settings.tiktok_app_audited) else "SELF_ONLY"
+    inbox = settings.tiktok_post_mode == "inbox"  # 傳到收件匣草稿，由使用者在 App 內按下發布
     if dry_run:
         urls = [f"(託管後網址)/{post_id}/{i.filename}" for i in report.items]
+        if inbox:
+            return PublishOutcome("exported", f"（dry-run）會把 {len(urls)} 張傳到 TikTok 收件匣草稿，欄位：{sorted(build_inbox_payload(pkg, urls)['post_info'])}")  # type: ignore[arg-type]
         payload = build_payload(pkg, urls, want)
         return PublishOutcome("exported", f"（dry-run）會以 {want} 發布 {len(urls)} 張，欄位：{sorted(payload['post_info'])}")  # type: ignore[arg-type]
 
@@ -286,12 +304,13 @@ def publish_post(
         if tokens.expires_at - time.time() < 300 and tokens.refresh_token:
             tokens = client.refresh(tokens.refresh_token)
             credentials.set_secret(f"tiktok:{account_id}", tokens.dumps())  # refresh token 已旋轉，立刻存回
-        info = client.creator_info(tokens.access_token)
+        info = {} if inbox else client.creator_info(tokens.access_token)  # 收件匣模式的隱私由使用者在 App 內選，不需檢查
     except AutotokSystemError as exc:
         return PublishOutcome("failed", f"發布前檢查失敗：{exc}")
-    options = [str(o) for o in info.get("privacy_level_options", []) if isinstance(o, str)]  # type: ignore[union-attr]
-    if want not in options:
-        return PublishOutcome("blocked", f"TikTok 目前不提供 {want}（可用：{', '.join(options) or '無'}）")
+    if not inbox:
+        options = [str(o) for o in info.get("privacy_level_options", []) if isinstance(o, str)]  # type: ignore[union-attr]
+        if want not in options:
+            return PublishOutcome("blocked", f"TikTok 目前不提供 {want}（可用：{', '.join(options) or '無'}）")
 
     runner_id = f"publisher-{os.getpid()}"
     if not repo.acquire_publish_lock(post_id, runner_id):
@@ -300,7 +319,7 @@ def publish_post(
     sent = False
     try:
         urls = host.upload(post_id, [Path(i.path) for i in report.items])
-        payload = build_payload(pkg, urls, want)
+        payload = build_inbox_payload(pkg, urls) if inbox else build_payload(pkg, urls, want)
         publish_id = ""
         try:
             sent = True  # 從這裡開始，請求可能已送達 TikTok
@@ -322,7 +341,7 @@ def publish_post(
             except AutotokSystemError:
                 continue
             state = str(st.get("status", ""))
-            if state == "PUBLISH_COMPLETE":
+            if state in (INBOX_DONE_STATES if inbox else {"PUBLISH_COMPLETE"}):
                 post_ids = [str(x) for x in st.get("publicaly_available_post_id", []) if x]  # type: ignore[union-attr]
                 break
             if state == "FAILED":
@@ -338,6 +357,10 @@ def publish_post(
             return PublishOutcome("failed", f"TikTok 處理失敗：{fail_reason}", platform_post_id=publish_id)
 
         pid = post_ids[0] if post_ids else publish_id
+        if inbox:
+            repo.update_status(post_id, PostStatus.SENT_TO_INBOX, platform_post_id=pid, last_error=None)
+            host.cleanup(post_id)
+            return PublishOutcome("inbox", INBOX_HINT, platform_post_id=pid)
         repo.update_status(post_id, PostStatus.PUBLISHED, platform_post_id=pid, last_error=None)
         host.cleanup(post_id)
         if want == "SELF_ONLY":

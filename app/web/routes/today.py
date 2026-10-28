@@ -15,9 +15,9 @@ from app.web.ui import parse_iso, render
 router = APIRouter()
 
 STEPS = ["選題", "生成", "審稿", "Notion", "排程"]
-_REVIEWED = {PostStatus.READY, PostStatus.SCHEDULED, PostStatus.PUBLISHING, PostStatus.PUBLISHED}
+_REVIEWED = {PostStatus.READY, PostStatus.SCHEDULED, PostStatus.PUBLISHING, PostStatus.PUBLISHED, PostStatus.SENT_TO_INBOX}
 _GENERATED = _REVIEWED | {PostStatus.READY_TO_REVIEW}
-_SCHEDULED = {PostStatus.SCHEDULED, PostStatus.PUBLISHING, PostStatus.PUBLISHED}
+_SCHEDULED = {PostStatus.SCHEDULED, PostStatus.PUBLISHING, PostStatus.PUBLISHED, PostStatus.SENT_TO_INBOX}
 _FAILED = {PostStatus.QUALITY_FAILED, PostStatus.FAILED}
 
 
