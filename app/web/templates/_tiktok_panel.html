@@ -1,7 +1,7 @@
 {% from "_macros.html" import icon, fresh, chip, action_btn %}
 <dl class="kv-tight">
   <dt>授權</dt>
-  <dd>{% if connected %}已授權{% if binding.expires_at %}，到期 {{ binding.expires_at|localdt(tz) }}{% endif %}{% else %}尚未授權{% endif %}</dd>
+  <dd>{% if connected %}已授權{% if expires_at %}，目前的存取權杖到期 {{ expires_at|localdt(tz) }}{% if auto_refresh %}（發布前會自動更新）{% endif %}{% endif %}{% else %}尚未授權{% endif %}</dd>
   <dt>發布能力</dt>
   <dd>{{ chip(cap_label, 'ok' if cap == 'public' else 'warn') }}</dd>
   <dt>發布條件</dt><dd class="pill-list">{{ chip('允許發布' if live_on else '未開啟發布', 'ok' if live_on else 'warn') }}{{ chip('App 已審核' if audited else 'App 未審核', 'ok' if audited else 'warn') }}{{ chip('圖片託管已設定' if host_ready else '圖片託管未設定', 'ok' if host_ready else 'warn') }}</dd>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -11,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from app import credentials
 from app.config import AppSettings
-from app.integrations.tiktok import OAuthStates, TikTokClient, capability_from_privacy_options
+from app.integrations.tiktok import OAuthStates, TikTokClient, TikTokTokens, capability_from_privacy_options
 from app.web.main import create_app
 
 
@@ -131,3 +132,22 @@ def test_library_export_writes_pack_without_network(tmp_path: Path, monkeypatch:
     r = c.post("/library/export", data={"post_id": "exp-1"})
     assert "exports" in r.headers["HX-Trigger"] or "\\u5df2\\u532f\\u51fa" in r.headers["HX-Trigger"]
     assert (tmp_path / "exports" / "exp-1" / "manifest.json").is_file()
+
+
+def test_inbox_mode_requests_only_upload_scope(tmp_path: Path) -> None:
+    """收件匣草稿模式只要求 user.info.basic 與 video.upload，不要求直接發布的 video.publish（最小權限）。"""
+    for mode, expect_publish in (("direct", True), ("inbox", False)):
+        cfg = AppSettings(SQLITE_DB_PATH=tmp_path / "t.db", TIKTOK_CLIENT_KEY="ck", TIKTOK_CLIENT_SECRET="cs", TIKTOK_POST_MODE=mode)
+        scopes = parse_qs(urlparse(TikTokClient(cfg).build_authorize_url("st")).query)["scope"][0].split(",")
+        assert "video.upload" in scopes and "user.info.basic" in scopes
+        assert ("video.publish" in scopes) is expect_publish
+
+
+def test_panel_shows_live_token_expiry_not_the_first_authorisation_time(tmp_path: Path) -> None:
+    """token 會在發布前自動更新；畫面要顯示目前的到期時間，不能停在第一次授權時記下的舊時間，否則看起來像已過期。"""
+    c = _client(tmp_path, _mock("carry.vietnam.tw", ["SELF_ONLY"]))
+    repo = c.app_ref.state.repo  # type: ignore[attr-defined]
+    credentials.set_secret("tiktok:carry-vietnam-tw", TikTokTokens("act", "rft", time.time() + 86400, "o1").dumps())
+    repo.save_tiktok_binding("carry-vietnam-tw", token_ref="tiktok:carry-vietnam-tw", publish_capability="self_only", expires_at="2020-01-01T00:00:00+00:00")
+    html = c.get("/tiktok/panel?account_id=carry-vietnam-tw").text
+    assert "2020" not in html and "發布前會自動更新" in html

@@ -27,6 +27,7 @@ CREATOR_INFO_URL = "https://open.tiktokapis.com/v2/post/publish/creator_info/que
 PHOTO_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/content/init/"
 STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 SCOPES = "user.info.basic,video.publish,video.upload"
+SCOPES_INBOX = "user.info.basic,video.upload"  # 收件匣草稿模式只需要上傳權限，不要求直接發布的權限
 _STATE_TTL = 600
 
 
@@ -108,7 +109,7 @@ class TikTokClient:
         self._require_app()
         params = {
             "client_key": self.settings.tiktok_client_key,
-            "scope": SCOPES,
+            "scope": SCOPES_INBOX if self.settings.tiktok_post_mode == "inbox" else SCOPES,
             "response_type": "code",
             "redirect_uri": self.settings.tiktok_redirect_uri,
             "state": state,

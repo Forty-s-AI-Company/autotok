@@ -71,6 +71,10 @@ def panel(request: Request, account_id: str = "") -> HTMLResponse:
     market = repo.get_market_profile(acc.account_id)
     binding = repo.get_tiktok_binding(acc.account_id)
     cap = str(binding["publish_capability"]) if binding else "export_only"
+    # 到期時間以目前存放的 token 為準（發布前會自動更新），不是第一次授權時記下的那個，否則看起來像已過期
+    raw = credentials.get_secret(str(binding["token_ref"])) if binding and binding.get("token_ref") else None
+    tokens = TikTokTokens.loads(raw) if raw else None
+    expires_at = _iso(tokens.expires_at) if tokens else (binding.get("expires_at") if binding else None)
     return templates.TemplateResponse(
         request,
         "_tiktok_panel.html",
@@ -79,6 +83,8 @@ def panel(request: Request, account_id: str = "") -> HTMLResponse:
             "account": acc,
             "tz": market.timezone,
             "binding": binding,
+            "expires_at": expires_at,
+            "auto_refresh": bool(tokens and tokens.refresh_token),
             "connected": bool(binding and binding.get("token_ref")),
             "cap": cap,
             "cap_label": CAP_LABEL.get(cap, cap),
