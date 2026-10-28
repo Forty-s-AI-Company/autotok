@@ -145,6 +145,8 @@ class handler(BaseHTTPRequestHandler):
                 return
             open_id = token_json.get("open_id", "")
             expires_in = token_json.get("expires_in", 0)
+            # 畫面上只顯示前幾碼，避免錄影或截圖時外洩；發布測試按鈕要用的完整 token 只放在隱藏欄位，不顯示
+            masked_token = f"{access_token[:6]}…（已隱藏，共 {len(access_token)} 個字元）"
 
             # 授權成功頁面，附帶發布按鈕
             html = f"""<!DOCTYPE html>
@@ -171,7 +173,7 @@ class handler(BaseHTTPRequestHandler):
         <p><strong>Open ID:</strong> {esc(str(open_id))}</p>
         <p><strong>有效期限:</strong> {esc(str(expires_in))} 秒</p>
         <p><strong>Access Token:</strong></p>
-        <div class="token-box">{esc(access_token)}</div>
+        <div class="token-box">{esc(masked_token)}</div>
     </div>
 
     <div class="card">

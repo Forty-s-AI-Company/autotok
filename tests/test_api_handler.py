@@ -81,3 +81,19 @@ def test_callback_relay_goes_to_the_local_console(path: str) -> None:
     with server() as port:
         status, headers, _ = request(port, "GET", path)
     assert status == 302 and headers["location"] == "http://127.0.0.1:31026/tiktok/oauth/callback?code=a&state=b"
+
+
+def test_authorised_page_never_shows_the_full_access_token() -> None:
+    """授權成功頁只顯示 token 前幾碼；完整 token 只出現在發布測試表單的隱藏欄位，不顯示在畫面上。"""
+    token = "act.ABCDEFGHIJKLMNOP1234567890"
+
+    def fake_urlopen(req, timeout=0):  # noqa: ANN001, ANN202
+        return FakeResponse(json.dumps({"access_token": token, "open_id": "oid", "expires_in": 86400}).encode())
+
+    with mock.patch.dict("os.environ", {"TIKTOK_CLIENT_SECRET": "s"}), mock.patch.object(handler_mod, "CLIENT_SECRET", "s"):
+        with server() as port, mock.patch.object(handler_mod.urllib.request, "urlopen", fake_urlopen):
+            status, _, html = request(port, "GET", "/api/index.py?__path=auth/callback&code=good")
+    assert status == 200 and "授權成功" in html
+    box = html.split('class="token-box">', 1)[1].split("</div>", 1)[0]
+    assert token not in box and box.startswith("act.AB") and "已隱藏" in box
+    assert html.count(token) == 1 and f'name="token" value="{token}"' in html  # 完整 token 只在隱藏欄位
