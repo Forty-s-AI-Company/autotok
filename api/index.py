@@ -14,8 +14,8 @@ from http.server import BaseHTTPRequestHandler
 # Client Key 會出現在每個授權網址裡，不是機密；Client Secret 只從 Vercel 環境變數讀取，不寫進程式碼。
 CLIENT_KEY = os.environ.get("TIKTOK_CLIENT_KEY", "sbaw5hpgnruu6rk1zy")
 CLIENT_SECRET = os.environ.get("TIKTOK_CLIENT_SECRET", "")
-REDIRECT_URI = "https://autotok.carry-digital-nomad.in.net/api/auth/callback"
-BASE_DOMAIN = "https://autotok.carry-digital-nomad.in.net"
+REDIRECT_URI = "https://studio.carry-digital-nomad.in.net/api/auth/callback"
+BASE_DOMAIN = "https://studio.carry-digital-nomad.in.net"
 # 本機操作台（run.py）的授權回呼。TikTok 後台不收 localhost / 127.0.0.1，
 # 所以登記公開的 /api/tiktok/callback，再由這裡把 code、state 轉回本機；目標固定，不接受外部指定。
 LOCAL_TIKTOK_CALLBACK = "http://127.0.0.1:31026/tiktok/oauth/callback"
