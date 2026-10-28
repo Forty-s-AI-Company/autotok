@@ -90,7 +90,7 @@ class handler(BaseHTTPRequestHandler):
 
             if error:
                 html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>授權失敗 - AutoTok</title>
+<html><head><meta charset="utf-8"><title>授權失敗 - Carry Studio</title>
 <style>body{{font-family:sans-serif;max-width:600px;margin:50px auto;padding:20px;line-height:1.6;}}</style>
 </head><body>
 <h2 style="color:#e53e3e;">❌ 授權失敗</h2>
@@ -151,7 +151,7 @@ class handler(BaseHTTPRequestHandler):
 <html>
 <head>
     <meta charset="utf-8">
-    <title>AutoTok - TikTok 授權成功</title>
+    <title>Carry Studio - TikTok 授權成功</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 680px; margin: 40px auto; padding: 24px; background: #0f172a; color: #f8fafc; line-height: 1.6; border-radius: 12px; }}
@@ -176,7 +176,7 @@ class handler(BaseHTTPRequestHandler):
 
     <div class="card">
         <h3>即將發布的測試照片輪播貼文 (Photo Carousel)</h3>
-        <p>標題：<code>AutoTok 自動化發布測試 🚀 #autotok #vietnam #travel</code></p>
+        <p>標題：<code>Carry Studio 自動化發布測試 🚀 #carrystudio #vietnam #travel</code></p>
         <p>圖片張數：6 張輪播圖</p>
         <div class="preview">
             <img src="{SLIDES[0]}">
@@ -197,7 +197,7 @@ class handler(BaseHTTPRequestHandler):
         # 3. 預設健康檢查
         self._send_json(200, {
             "status": "ok",
-            "app": "AutoTok",
+            "app": "Carry Studio",
             "received_path": self.path,
             "x_matched_path": self.headers.get("x-matched-path", ""),
             "auth_login_url": f"{BASE_DOMAIN}/api/auth/login",
@@ -226,7 +226,7 @@ class handler(BaseHTTPRequestHandler):
             payload = {
                 "media_type": "PHOTO",
                 "post_info": {
-                    "title": "AutoTok 自動化發布測試 🚀 #autotok #vietnam #travel",
+                    "title": "Carry Studio 自動化發布測試 🚀 #carrystudio #vietnam #travel",
                     "privacy_level": "PUBLIC_TO_EVERYONE",
                     "disable_duet": False,
                     "disable_comment": False,
@@ -268,7 +268,7 @@ class handler(BaseHTTPRequestHandler):
 <html>
 <head>
     <meta charset="utf-8">
-    <title>AutoTok - 發布成功</title>
+    <title>Carry Studio - 發布成功</title>
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 680px; margin: 40px auto; padding: 24px; background: #0f172a; color: #f8fafc; line-height: 1.6; border-radius: 12px; }}
         h1 {{ color: #22c55e; }}

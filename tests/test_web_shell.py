@@ -28,7 +28,7 @@ def test_all_pages_render(client: TestClient) -> None:
     for path in ["/", "/research", "/studio", "/library", "/analytics", "/settings"]:
         r = client.get(path)
         assert r.status_code == 200, path
-        assert "AutoTok" in r.text
+        assert "Carry Studio" in r.text
 
 
 def test_rejects_non_local_host(tmp_path: Path) -> None:
