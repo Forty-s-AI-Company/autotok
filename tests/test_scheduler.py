@@ -330,3 +330,43 @@ def test_pick_topic_skips_compliance_flagged_cases(tmp_path: Path) -> None:
     assert len(flagged) == 1  # 收入比較被標為需合規審核
     topic, _ = pick_topic(repo, "carry-vietnam-tw", market, SLOT_KINDS[1], min_fit=0)
     assert topic is not None and "Kiếm tiền" not in topic.title_vi
+
+
+class _FakeSearch:
+    """假的網搜來源：可用，但這次沒找到案例（網搜打不開 TikTok 時的實際情況）。"""
+
+    label = "網路搜尋"
+
+    def __init__(self, cfg, market) -> None:  # noqa: ANN001
+        pass
+
+    def availability(self):  # noqa: ANN201
+        from app.research_providers import Availability
+
+        return Availability(True)
+
+    def collect_cases(self, *, max_cases: int = 30):  # noqa: ANN201
+        return []
+
+
+def test_scheduled_research_with_no_new_cases_is_not_a_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """沒找到新案例是這種研究方式在 TikTok 上的正常結果：沿用既有案例，不要每天失敗三次並發通知。"""
+    monkeypatch.setattr("app.scheduler.LlmWebSearchProvider", _FakeSearch)
+    cfg = AppSettings(SQLITE_DB_PATH=tmp_path / "t.db")
+    repo = PostStateRepository(cfg.sqlite_db_path)
+    summary = sched._default_research(repo, cfg, "carry-vietnam-tw", repo.get_market_profile("carry-vietnam-tw"))
+    assert "沒有找到新案例" in summary and "沿用" in summary
+
+
+def test_scheduled_research_real_failures_still_raise(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Unavailable(_FakeSearch):
+        def availability(self):  # noqa: ANN201
+            from app.research_providers import Availability
+
+            return Availability(False, "找不到可用的搜尋後端")
+
+    monkeypatch.setattr("app.scheduler.LlmWebSearchProvider", Unavailable)
+    cfg = AppSettings(SQLITE_DB_PATH=tmp_path / "t.db")
+    repo = PostStateRepository(cfg.sqlite_db_path)
+    with pytest.raises(RuntimeError, match="找不到可用的搜尋後端"):
+        sched._default_research(repo, cfg, "carry-vietnam-tw", repo.get_market_profile("carry-vietnam-tw"))

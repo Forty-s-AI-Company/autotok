@@ -29,7 +29,7 @@ from app.pipeline import (
 )
 from app.publisher import PublishOutcome, publish_post
 from app.research_providers import LlmWebSearchProvider
-from app.research_service import run_research
+from app.research_service import CASE_WINDOW_DAYS, NoCasesFoundError, run_research
 from app.state import PostStateRepository
 
 MAX_ATTEMPTS = 3
@@ -72,7 +72,12 @@ class Executors:
 
 
 def _default_research(repo: PostStateRepository, cfg: AppSettings, account_id: str, market: MarketProfile) -> str:
-    return run_research(repo, account_id=account_id, market=market, provider=LlmWebSearchProvider(cfg, market), max_cases=30)
+    try:
+        return run_research(repo, account_id=account_id, market=market, provider=LlmWebSearchProvider(cfg, market), max_cases=30)
+    except NoCasesFoundError:
+        # 沒找到新案例不是故障：沿用資料庫既有案例，不要每天失敗三次並發失敗通知
+        existing = len(repo.list_research_cases(days=CASE_WINDOW_DAYS))
+        return f"這次沒有找到新案例，沿用資料庫既有的 {existing} 筆"
 
 
 def _default_produce(

@@ -20,6 +20,10 @@ from app.state import PostStateRepository
 CASE_WINDOW_DAYS = 90
 
 
+class NoCasesFoundError(RuntimeError):
+    """來源可用、也正常執行，但這次沒有找到案例（例如網搜打不開 TikTok）。不是故障，與來源壞掉要分開處理。"""
+
+
 def refit_account(repo: PostStateRepository, account_id: str, market: MarketProfile) -> list[CaseFit]:
     """重新計算並寫入某帳號對所有近期案例的適配度。"""
     fits = compute_fits(repo.list_research_cases(days=CASE_WINDOW_DAYS), market)
@@ -47,7 +51,7 @@ def run_research(
     progress(f"正在向「{provider.label}」蒐集案例…")
     cases = provider.collect_cases(max_cases=max_cases)
     if not cases:
-        raise RuntimeError(f"「{provider.label}」沒有找到任何帶有來源網址的案例，沒有寫入任何資料。")
+        raise NoCasesFoundError(f"「{provider.label}」沒有找到任何帶有來源網址的案例，沒有寫入任何資料。")
     progress(f"取得 {len(cases)} 筆，寫入並計算適配度…")
     for c in cases:
         repo.upsert_research_case(c)
