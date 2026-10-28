@@ -1,6 +1,6 @@
 """Vercel Serverless Function 入口點。
 
-處理 TikTok OAuth 授權回呼、Token 交換與照片輪播貼文發布測試。
+處理 TikTok OAuth 授權回呼、Token 交換，以及把照片輪播傳到 TikTok 收件匣草稿的測試（MEDIA_UPLOAD，不直接發布）。
 """
 
 import json
@@ -71,7 +71,7 @@ class handler(BaseHTTPRequestHandler):
                 "https://www.tiktok.com/v2/auth/authorize/?"
                 + urllib.parse.urlencode({
                     "client_key": CLIENT_KEY,
-                    "scope": "user.info.basic,video.publish,video.upload",
+                    "scope": "user.info.basic,video.upload",  # 與 TikTok 後台 Production 申請的權限一致：不要求直接發布
                     "response_type": "code",
                     "redirect_uri": REDIRECT_URI,
                     "state": "autotok_auth_state",
@@ -175,9 +175,9 @@ class handler(BaseHTTPRequestHandler):
     </div>
 
     <div class="card">
-        <h3>即將發布的測試照片輪播貼文 (Photo Carousel)</h3>
-        <p>標題：<code>Carry Studio 自動化發布測試 🚀 #carrystudio #vietnam #travel</code></p>
-        <p>圖片張數：6 張輪播圖</p>
+        <h3>即將傳到你的 TikTok 收件匣草稿的測試照片輪播 (Photo Carousel)</h3>
+        <p>標題：<code>Carry Studio test carousel (draft)</code></p>
+        <p>圖片張數：6 張輪播圖。傳送後不會公開，要由你在 TikTok App 內自己決定是否發布。</p>
         <div class="preview">
             <img src="{SLIDES[0]}">
             <img src="{SLIDES[1]}">
@@ -186,7 +186,7 @@ class handler(BaseHTTPRequestHandler):
         <br>
         <form action="/api/publish" method="POST">
             <input type="hidden" name="token" value="{esc(access_token, quote=True)}">
-            <button type="submit">🚀 立即發布一則照片輪播到 @carry.vietnam.tw</button>
+            <button type="submit">傳到 TikTok 收件匣草稿（由你在 App 內決定是否發布）</button>
         </form>
     </div>
 </body>
@@ -221,21 +221,18 @@ class handler(BaseHTTPRequestHandler):
                 self._send_html(400, "<h2>缺少 Access Token</h2>")
                 return
 
-            # 呼叫 TikTok Content Posting API 發布相片輪播貼文
+            # 呼叫 TikTok Content Posting API，把相片輪播傳到使用者的 TikTok 收件匣草稿（MEDIA_UPLOAD）。
+            # 不直接發布：隱私、留言、音樂與 AI 生成標示都由使用者在 TikTok App 內自己決定。
             publish_url = "https://open.tiktokapis.com/v2/post/publish/content/init/"
             payload = {
                 "media_type": "PHOTO",
+                "post_mode": "MEDIA_UPLOAD",
                 "post_info": {
-                    "title": "Carry Studio 自動化發布測試 🚀 #carrystudio #vietnam #travel",
-                    "privacy_level": "PUBLIC_TO_EVERYONE",
-                    "disable_duet": False,
-                    "disable_comment": False,
-                    "disable_stitch": False,
-                    "auto_add_music": True,
+                    "title": "Carry Studio test carousel (draft)",
                 },
                 "source_info": {
                     "source": "PULL_FROM_URL",
-                    "photo_cover_index": 1,
+                    "photo_cover_index": 0,
                     "photo_images": SLIDES,
                 },
             }
@@ -256,11 +253,11 @@ class handler(BaseHTTPRequestHandler):
             except urllib.error.HTTPError as e:
                 err_text = e.read().decode("utf-8", errors="ignore")
                 self._send_html(500, f"""<!DOCTYPE html><html><body style="font-family:sans-serif;background:#0f172a;color:#fff;padding:40px;">
-                    <h2 style="color:#ef4444;">發布失敗</h2><pre style="background:#1e293b;padding:16px;border-radius:8px;">{esc(err_text)}</pre>
+                    <h2 style="color:#ef4444;">傳送到收件匣失敗</h2><pre style="background:#1e293b;padding:16px;border-radius:8px;">{esc(err_text)}</pre>
                 </body></html>""")
                 return
             except Exception as e:
-                self._send_html(500, f"<h2>發布連線錯誤</h2><p>{esc(str(e))}</p>")
+                self._send_html(500, f"<h2>傳送連線錯誤</h2><p>{esc(str(e))}</p>")
                 return
 
             publish_id = result_json.get("data", {}).get("publish_id", "未知")
@@ -268,7 +265,7 @@ class handler(BaseHTTPRequestHandler):
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Carry Studio - 發布成功</title>
+    <title>Carry Studio - 已傳到收件匣</title>
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 680px; margin: 40px auto; padding: 24px; background: #0f172a; color: #f8fafc; line-height: 1.6; border-radius: 12px; }}
         h1 {{ color: #22c55e; }}
@@ -278,14 +275,14 @@ class handler(BaseHTTPRequestHandler):
     </style>
 </head>
 <body>
-    <h1>🎉 貼文發布請求成功！</h1>
+    <h1>已傳送到 TikTok 收件匣草稿</h1>
     <div class="card">
-        <h3>TikTok 伺服器已成功接收任務</h3>
+        <h3>TikTok 伺服器已成功接收上傳任務</h3>
         <p><strong>Publish ID:</strong> <code>{esc(str(publish_id))}</code></p>
         <p>狀態回傳：</p>
         <pre>{esc(json.dumps(result_json, ensure_ascii=False, indent=2))}</pre>
         <br>
-        <p>請打開您的手機 TikTok App 或至帳號查看最新照片輪播貼文！</p>
+        <p>請打開手機 TikTok App 的通知或收件匣，完成編輯、自己選擇隱私並開啟「AI 生成內容」標示後再發布。</p>
     </div>
 </body>
 </html>"""
