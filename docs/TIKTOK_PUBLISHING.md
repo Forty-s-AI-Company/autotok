@@ -29,7 +29,7 @@
 
 ## 審核（Audit）
 
-沒有審核時，全部貼文只能 `SELF_ONLY`。Direct Post 的審核看使用者介面是否符合規範：顯示帳號暱稱、隱私選項不預設、留言開關、商業內容揭露、發布前聲明同意音樂使用確認、不加浮水印、提供內容預覽。`artifacts/tiktok_developer_demo_flow.mp4` 是目前準備的操作示範。審核通過前 `TIKTOK_APP_AUDITED` 維持 `false`，程式一律只送 `SELF_ONLY`。
+沒有審核時，全部貼文只能 `SELF_ONLY`。Direct Post 的審核看使用者介面是否符合規範：顯示帳號暱稱、隱私選項不預設、留言開關、商業內容揭露、發布前聲明同意音樂使用確認、不加浮水印、提供內容預覽。`artifacts/carry_studio_demo.mp4` 是目前準備的操作示範，由 `scripts/build_demo_video.py` 用實際執行中的網站與操作台截圖組成（畫面都是真的，不是程式畫出來的）。審核通過前 `TIKTOK_APP_AUDITED` 維持 `false`，程式一律只送 `SELF_ONLY`。
 
 ## 目前卡在哪
 

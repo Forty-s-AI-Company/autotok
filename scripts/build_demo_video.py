@@ -1,6 +1,6 @@
 """用「真實截圖」組成 TikTok App Review 的端到端示範影片（1920x1080 MP4 / H.264）。
 
-與舊的 generate_demo_video.py 不同：這裡每個畫面都是實際執行中的網站與操作台截圖，沒有任何畫出來的假畫面。
+每個畫面都是實際執行中的網站與操作台截圖，沒有任何畫出來的假畫面（TikTok 要求示範影片呈現真實的介面與流程）。
 只有標題卡、結尾卡，以及一張「真實 API 執行結果」的文字卡（內容逐字取自實際執行的輸出）是版面設計。
 
 用法：uv run python scripts/build_demo_video.py --shots <截圖資料夾> --out artifacts/carry_studio_demo.mp4
