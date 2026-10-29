@@ -240,7 +240,7 @@ def test_inbox_mode_sends_draft_without_privacy_and_never_claims_published(env) 
     assert init_body["source_info"]["photo_images"][0].startswith("https://cdn.example.com/m/")
     assert "creator_info" not in rec.paths()  # 收件匣模式不需要檢查隱私選項
     assert repo.get_post_status(PID) == PostStatus.SENT_TO_INBOX  # 不是 PUBLISHED：還沒公開
-    assert not (sync_dir / PID).exists()
+    assert (sync_dir / PID).is_dir()  # 草稿還沒發布前，託管的圖片要保留（編輯器可能還會讀原圖）
     assert repo.acquire_publish_lock(PID, "x") is False  # 已送出，不可重複送
 
 
@@ -273,14 +273,19 @@ def _sent_to_inbox(env) -> None:
 def test_reconcile_marks_published_once_user_posts_in_app(env) -> None:
     from app.publisher import reconcile_inbox_post
 
-    repo, cfg, _ = env
+    repo, cfg, sync_dir = env
     _sent_to_inbox(env)
+    host_dir = sync_dir / PID
+    host_dir.mkdir(parents=True)
+    (host_dir / "slide_01.jpg").write_bytes(b"x")
     rec = Recorder(statuses=[{"status": "SEND_TO_USER_INBOX"}, {"status": "PUBLISH_COMPLETE", "publicaly_available_post_id": ["777"]}])
     assert "還沒發布" in reconcile_inbox_post(repo, cfg, ACC, PID, transport=rec.transport)
+    assert host_dir.is_dir()  # 還沒發布就不刪圖片
     assert repo.get_post_status(PID) == PostStatus.SENT_TO_INBOX
     assert "PUBLISHED" in reconcile_inbox_post(repo, cfg, ACC, PID, transport=rec.transport)
     assert repo.get_post_status(PID) == PostStatus.PUBLISHED and repo.get_platform_post_id(PID) == "777"
     assert set(rec.paths()) == {"fetch"}  # 只查詢狀態，沒有重新上傳
+    assert not host_dir.exists()  # 已發布才清掉託管的圖片
 
 
 def test_reconcile_ignores_posts_that_are_not_inbox_drafts_and_needs_publish_id(env) -> None:

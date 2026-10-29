@@ -125,7 +125,7 @@ def main() -> None:
         ),
         (shot_scene(S / "site_home.png", f"{site}/", "STEP 1", "Website. This is the Web URL registered in the app settings, on the same domain.", (560, 338, 1360, 788)), 4),
         (shot_scene(S / "site_privacy.png", f"{site}/privacy", "STEP 1", "Privacy Policy (1/2): we process only the connected account's OAuth token and our own carousel images and captions.", (480, 40, 1440, 580)), 5),
-        (shot_scene(S / "site_privacy.png", f"{site}/privacy", "STEP 1", "Privacy Policy (2/2): images are hosted temporarily and deleted after TikTok retrieves them; we collect no data about other TikTok users.", (480, 540, 1440, 1080)), 6),
+        (shot_scene(S / "site_privacy.png", f"{site}/privacy", "STEP 1", "Privacy Policy (2/2): images are hosted temporarily and deleted once the creator has published the post; we collect no data about other TikTok users.", (480, 540, 1440, 1080)), 6),
         (shot_scene(S / "site_terms.png", f"{site}/terms", "STEP 1", "Terms of Service (1/2): the tool is used to prepare and preview multi-photo carousel posts for TikTok accounts.", (480, 40, 1440, 580)), 5),
         (shot_scene(S / "site_terms.png", f"{site}/terms", "STEP 1", "Terms of Service (2/2): posts may be sent to the TikTok inbox as drafts; the creator decides in the TikTok app whether to publish.", (480, 540, 1440, 1080)), 6),
         (

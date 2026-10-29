@@ -259,6 +259,7 @@ def reconcile_inbox_post(
     post_id: str,
     *,
     transport: httpx.BaseTransport | None = None,
+    image_host: ImageHost | None = None,
 ) -> str:
     """收件匣草稿對帳：向 TikTok 查詢這篇是否已被使用者在 App 內發布，已發布就把狀態改成 PUBLISHED。
 
@@ -282,6 +283,9 @@ def reconcile_inbox_post(
     if state == "PUBLISH_COMPLETE":
         ids = [str(x) for x in st.get("publicaly_available_post_id", []) if x]  # type: ignore[union-attr]
         repo.update_status(post_id, PostStatus.PUBLISHED, platform_post_id=ids[0] if ids else None, last_error=None)
+        host = image_host or image_host_from_settings(settings)
+        if host is not None:
+            host.cleanup(post_id)  # 已發布，暫存圖片可以刪了
         return "已在 TikTok 發布，狀態改為 PUBLISHED"
     return f"TikTok 狀態：{state or '未知'}，還沒發布"
 
@@ -393,7 +397,8 @@ def publish_post(
         pid = post_ids[0] if post_ids else publish_id
         if inbox:
             repo.update_status(post_id, PostStatus.SENT_TO_INBOX, platform_post_id=pid, last_error=None)
-            host.cleanup(post_id)
+            # 圖片不能在這裡刪：使用者在 TikTok 編輯草稿時可能還會讀取原圖（提早刪除會讓編輯器全黑）。
+            # 等對帳確認已發布後才由 reconcile_inbox_post 清理。
             return PublishOutcome("inbox", INBOX_HINT, platform_post_id=pid)
         repo.update_status(post_id, PostStatus.PUBLISHED, platform_post_id=pid, last_error=None)
         host.cleanup(post_id)
