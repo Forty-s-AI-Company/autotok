@@ -32,6 +32,9 @@ class Calls:
         self.publish_outcome = PublishOutcome("exported", "已匯出發布包")
         self.produce_error: str | None = None
         self.research_error: str | None = None
+        self.reconciled: list[str] = []
+        self.reconcile_error: str | None = None
+        self.user_posted = False
 
     def executors(self) -> Executors:
         def research(repo, cfg, aid, market):  # noqa: ANN001
@@ -54,7 +57,15 @@ class Calls:
             self.publish.append(post_id)
             return self.publish_outcome
 
-        return Executors(research, produce, notion, publish)
+        def reconcile(repo, cfg, aid, post_id):  # noqa: ANN001
+            self.reconciled.append(post_id)
+            if self.reconcile_error:
+                raise RuntimeError(self.reconcile_error)
+            if self.user_posted:
+                repo.update_status(post_id, PostStatus.PUBLISHED)
+            return "查詢完成"
+
+        return Executors(research, produce, notion, publish, reconcile)
 
 
 @pytest.fixture()
@@ -254,6 +265,41 @@ def test_mock_posts_are_never_published_or_synced(env) -> None:  # noqa: ANN001
     set_cap(repo, "export_only")
     run(env, NOON_UTC)
     assert calls.publish == [] and calls.notion == 0
+
+
+# ---------- 收件匣草稿對帳：使用者在 TikTok 發布後，狀態與 Notion 自動跟上 ----------
+
+
+def test_inbox_draft_is_reconciled_and_notion_follows(env, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
+    _, repo, _, calls, root = env
+    monkeypatch.setattr(sched, "notion_bound", lambda repo, cfg, aid: True)
+    post = make_post(repo, root, "carry-vietnam-tw", "2026-10-20", SLOT, status=PostStatus.SENT_TO_INBOX)
+    r1 = run(env, NOON_UTC)  # 還沒發布：只查詢，狀態不變，Notion 以「已排程」同步一次
+    assert calls.reconciled == [post.post_id] and repo.get_post_status(post.post_id) == PostStatus.SENT_TO_INBOX
+    assert calls.notion == 1 and not any("PUBLISHED" in x or "已在" in x for x in r1.done)
+    calls.user_posted = True
+    r2 = run(env, NOON_UTC + timedelta(minutes=10))  # 使用者已發布：狀態改 PUBLISHED，Notion 立刻再同步
+    assert repo.get_post_status(post.post_id) == PostStatus.PUBLISHED
+    assert calls.notion == 2 and any(post.post_id in x for x in r2.done)
+    run(env, NOON_UTC + timedelta(minutes=20))  # 已發布就不再查詢
+    assert calls.reconciled == [post.post_id] * 2
+
+
+def test_reconcile_failure_is_not_a_scheduler_failure(env) -> None:  # noqa: ANN001
+    _, repo, sent, calls, root = env
+    post = make_post(repo, root, "carry-vietnam-tw", "2026-10-20", SLOT, status=PostStatus.SENT_TO_INBOX)
+    calls.reconcile_error = "network down"
+    result = run(env, NOON_UTC)
+    assert calls.reconciled == [post.post_id] and not result.failed and sent == []
+    assert repo.get_post_status(post.post_id) == PostStatus.SENT_TO_INBOX
+
+
+def test_old_or_mock_inbox_drafts_are_not_queried(env) -> None:  # noqa: ANN001
+    _, repo, _, calls, root = env
+    make_post(repo, root, "carry-vietnam-tw", "2026-10-05", SLOT, status=PostStatus.SENT_TO_INBOX)
+    make_post(repo, root, "carry-vietnam-tw", "2026-10-20", SLOT, mock=True, status=PostStatus.SENT_TO_INBOX)
+    run(env, NOON_UTC)
+    assert calls.reconciled == []
 
 
 # ---------- 設定頁、CLI、題目挑選 ----------

@@ -260,3 +260,35 @@ def test_inbox_mode_failure_is_reported(env) -> None:
     out, _ = run(env, Recorder(statuses=[{"status": "FAILED", "fail_reason": "photo_pull_failed"}]))
     assert out.status == "failed" and "photo_pull_failed" in out.detail
     assert repo.get_post_status(PID) == PostStatus.FAILED
+
+
+# ---------- 收件匣草稿對帳 ----------
+
+
+def _sent_to_inbox(env) -> None:
+    repo, _, _ = env
+    repo.update_status(PID, PostStatus.SENT_TO_INBOX, platform_post_id="pub1")
+
+
+def test_reconcile_marks_published_once_user_posts_in_app(env) -> None:
+    from app.publisher import reconcile_inbox_post
+
+    repo, cfg, _ = env
+    _sent_to_inbox(env)
+    rec = Recorder(statuses=[{"status": "SEND_TO_USER_INBOX"}, {"status": "PUBLISH_COMPLETE", "publicaly_available_post_id": ["777"]}])
+    assert "還沒發布" in reconcile_inbox_post(repo, cfg, ACC, PID, transport=rec.transport)
+    assert repo.get_post_status(PID) == PostStatus.SENT_TO_INBOX
+    assert "PUBLISHED" in reconcile_inbox_post(repo, cfg, ACC, PID, transport=rec.transport)
+    assert repo.get_post_status(PID) == PostStatus.PUBLISHED and repo.get_platform_post_id(PID) == "777"
+    assert set(rec.paths()) == {"fetch"}  # 只查詢狀態，沒有重新上傳
+
+
+def test_reconcile_ignores_posts_that_are_not_inbox_drafts_and_needs_publish_id(env) -> None:
+    from app.publisher import reconcile_inbox_post
+
+    repo, cfg, _ = env
+    rec = Recorder()
+    assert "略過" in reconcile_inbox_post(repo, cfg, ACC, PID, transport=rec.transport)  # READY
+    repo.update_status(PID, PostStatus.SENT_TO_INBOX)  # 沒有 publish_id
+    assert "publish_id" in reconcile_inbox_post(repo, cfg, ACC, PID, transport=rec.transport)
+    assert rec.calls == [] and repo.get_post_status(PID) == PostStatus.SENT_TO_INBOX

@@ -252,6 +252,40 @@ def _load_tokens(account_id: str, token_ref: str) -> TikTokTokens | None:
     return TikTokTokens.loads(raw) if raw else None
 
 
+def reconcile_inbox_post(
+    repo: PostStateRepository,
+    settings: AppSettings,
+    account_id: str,
+    post_id: str,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> str:
+    """收件匣草稿對帳：向 TikTok 查詢這篇是否已被使用者在 App 內發布，已發布就把狀態改成 PUBLISHED。
+
+    只讀取狀態，不會重新上傳或發布。查不到、尚未發布都只回報文字，不改狀態。
+    """
+    if repo.get_post_status(post_id) != PostStatus.SENT_TO_INBOX:
+        return "不是待發布的收件匣草稿，略過"
+    publish_id = repo.get_platform_post_id(post_id)
+    if not publish_id:
+        return "沒有 publish_id，無法查詢"
+    binding = repo.get_tiktok_binding(account_id)
+    tokens = _load_tokens(account_id, str(binding["token_ref"]) if binding else "")
+    if tokens is None:
+        return "沒有可用的 TikTok 授權，略過"
+    client = TikTokClient(settings, transport=transport)
+    if tokens.expires_at - time.time() < 300 and tokens.refresh_token:
+        tokens = client.refresh(tokens.refresh_token)
+        credentials.set_secret(f"tiktok:{account_id}", tokens.dumps())  # refresh token 已旋轉，立刻存回
+    st = client.fetch_status(tokens.access_token, publish_id)
+    state = str(st.get("status", ""))
+    if state == "PUBLISH_COMPLETE":
+        ids = [str(x) for x in st.get("publicaly_available_post_id", []) if x]  # type: ignore[union-attr]
+        repo.update_status(post_id, PostStatus.PUBLISHED, platform_post_id=ids[0] if ids else None, last_error=None)
+        return "已在 TikTok 發布，狀態改為 PUBLISHED"
+    return f"TikTok 狀態：{state or '未知'}，還沒發布"
+
+
 def publish_post(
     repo: PostStateRepository,
     settings: AppSettings,

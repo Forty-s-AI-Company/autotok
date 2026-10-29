@@ -20,3 +20,4 @@ def _never_push_images(monkeypatch: pytest.MonkeyPatch) -> None:
     # 環境變數優先於 .env；避免本機啟用自動 push 後，測試對真實的 git repo 與網站動手
     monkeypatch.setenv("IMAGE_HOST_GIT_PUSH", "false")
     monkeypatch.setenv("ALLOW_LIVE_PUBLISH", "false")  # 本機 .env 開啟真實發布時，測試也不能受影響
+    monkeypatch.setenv("TIKTOK_POST_MODE", "direct")  # 本機 .env 設為收件匣模式時，測試仍以預設的直接發布為準
