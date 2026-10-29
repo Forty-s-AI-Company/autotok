@@ -257,54 +257,19 @@ def mark_inbox_post_published(
     settings: AppSettings,
     post_id: str,
     *,
-    platform_post_id: str | None = None,
     image_host: ImageHost | None = None,
 ) -> str:
     """收件匣草稿確認已在 TikTok 發布：狀態改 PUBLISHED（Notion 下次同步跟上），並刪除託管的暫存圖片。
 
-    TikTok 的收件匣模式不會回報使用者是否已發布，所以由使用者在控制台按「標記為已發布」呼叫這裡。
+    TikTok 的收件匣模式不會回報使用者是否已發布（實測狀態會一直停在 SEND_TO_USER_INBOX），所以由使用者在控制台按「標記為已發布」呼叫這裡。
     """
     if repo.get_post_status(post_id) != PostStatus.SENT_TO_INBOX:
         raise AutotokSystemError("這篇不是「已傳到收件匣」的草稿，不能標記為已發布", code="NOT_INBOX_DRAFT")
-    repo.update_status(post_id, PostStatus.PUBLISHED, platform_post_id=platform_post_id, last_error=None)
+    repo.update_status(post_id, PostStatus.PUBLISHED, last_error=None)
     host = image_host or image_host_from_settings(settings)
     if host is not None:
         host.cleanup(post_id)  # 已發布，暫存圖片可以刪了
     return "已標記為已發布"
-
-
-def reconcile_inbox_post(
-    repo: PostStateRepository,
-    settings: AppSettings,
-    account_id: str,
-    post_id: str,
-    *,
-    transport: httpx.BaseTransport | None = None,
-    image_host: ImageHost | None = None,
-) -> str:
-    """收件匣草稿對帳：向 TikTok 查詢這篇是否已被使用者在 App 內發布，已發布就把狀態改成 PUBLISHED。
-
-    只讀取狀態，不會重新上傳或發布。查不到、尚未發布都只回報文字，不改狀態。
-    """
-    if repo.get_post_status(post_id) != PostStatus.SENT_TO_INBOX:
-        return "不是待發布的收件匣草稿，略過"
-    publish_id = repo.get_platform_post_id(post_id)
-    if not publish_id:
-        return "沒有 publish_id，無法查詢"
-    binding = repo.get_tiktok_binding(account_id)
-    tokens = _load_tokens(account_id, str(binding["token_ref"]) if binding else "")
-    if tokens is None:
-        return "沒有可用的 TikTok 授權，略過"
-    client = TikTokClient(settings, transport=transport)
-    if tokens.expires_at - time.time() < 300 and tokens.refresh_token:
-        tokens = client.refresh(tokens.refresh_token)
-        credentials.set_secret(f"tiktok:{account_id}", tokens.dumps())  # refresh token 已旋轉，立刻存回
-    st = client.fetch_status(tokens.access_token, publish_id)
-    state = str(st.get("status", ""))
-    if state == "PUBLISH_COMPLETE":
-        ids = [str(x) for x in st.get("publicaly_available_post_id", []) if x]  # type: ignore[union-attr]
-        return mark_inbox_post_published(repo, settings, post_id, platform_post_id=ids[0] if ids else None, image_host=image_host)
-    return f"TikTok 狀態：{state or '未知'}，還沒發布"
 
 
 def publish_post(
@@ -415,7 +380,7 @@ def publish_post(
         if inbox:
             repo.update_status(post_id, PostStatus.SENT_TO_INBOX, platform_post_id=pid, last_error=None)
             # 圖片不能在這裡刪：使用者在 TikTok 編輯草稿時可能還會讀取原圖（提早刪除會讓編輯器全黑）。
-            # 等對帳確認已發布後才由 reconcile_inbox_post 清理。
+            # 等使用者標記已發布後才由 mark_inbox_post_published 清理。
             return PublishOutcome("inbox", INBOX_HINT, platform_post_id=pid)
         repo.update_status(post_id, PostStatus.PUBLISHED, platform_post_id=pid, last_error=None)
         host.cleanup(post_id)

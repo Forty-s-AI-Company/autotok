@@ -27,7 +27,7 @@ from app.pipeline import (
     produce_post,
     sync_post_to_notion,
 )
-from app.publisher import PublishOutcome, publish_post, reconcile_inbox_post
+from app.publisher import PublishOutcome, publish_post
 from app.research_providers import LlmWebSearchProvider
 from app.research_service import CASE_WINDOW_DAYS, NoCasesFoundError, run_research
 from app.state import PostStateRepository
@@ -71,7 +71,6 @@ class Executors:
     produce: Callable[[PostStateRepository, AppSettings, Path, str, str, ContentSlot], str]
     notion: Callable[[PostStateRepository, AppSettings, str, CarouselPostPackage], str]
     publish: Callable[[PostStateRepository, AppSettings, str, str], PublishOutcome]
-    reconcile: Callable[[PostStateRepository, AppSettings, str, str], str] = reconcile_inbox_post
 
 
 def _default_research(repo: PostStateRepository, cfg: AppSettings, account_id: str, market: MarketProfile) -> str:
@@ -385,28 +384,6 @@ def _pending_inbox_draft(repo: PostStateRepository, account_id: str, exclude_pos
     return ""
 
 
-def _reconcile_inbox(
-    repo: PostStateRepository, cfg: AppSettings, ex: Executors, result: TickResult, now_utc: datetime, account_ids: list[str] | None
-) -> None:
-    """收件匣草稿對帳：使用者在 TikTok 按下發布後，狀態改成 PUBLISHED，接著 Notion 同步會跟著更新。
-
-    查詢失敗不算排程失敗（草稿可能還沒發、網路暫時不通），下一次 tick 再查。
-    """
-    for acc in repo.list_accounts():
-        if account_ids and acc.account_id not in account_ids:
-            continue
-        cutoff = (now_utc.astimezone(ZoneInfo(repo.get_market_profile(acc.account_id).timezone)).date() - timedelta(days=INBOX_WINDOW_DAYS)).isoformat()
-        for post in repo.list_posts(account_id=acc.account_id):
-            if post.status != PostStatus.SENT_TO_INBOX or post.is_mock or post.scheduled_at_taipei[:10] < cutoff:
-                continue
-            try:
-                info = ex.reconcile(repo, cfg, acc.account_id, post.post_id)
-            except Exception:  # noqa: BLE001
-                continue
-            if repo.get_post_status(post.post_id) == PostStatus.PUBLISHED:
-                result.done.append(f"{acc.handle} {post.post_id}：{info}"[:200])
-
-
 def tick(
     repo: PostStateRepository,
     cfg: AppSettings,
@@ -446,7 +423,6 @@ def tick(
             return result
 
         ex = executors or default_executors()
-        _reconcile_inbox(repo, cfg, ex, result, now_utc, ids)
         for kinds in (("research", "produce"), ("notion", "publish")):
             # 第二輪重新規劃：剛做好的貼文可以馬上同步與匯出，不必等下一次 tick
             for a in (result.planned if kinds[0] == "research" else plan(repo, cfg, now_utc, ids)):

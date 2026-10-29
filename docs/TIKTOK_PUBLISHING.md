@@ -1,10 +1,27 @@
 # TikTok 照片輪播發布
 
-依 TikTok 官方文件整理（查證日 2026-10-20）。標「未驗證」的是沒有用真實帳號實測過的項目。
+依 TikTok 官方文件整理（查證日 2026-10-20），2026-10-29 補上收件匣模式的實測結果。標「未驗證」的是沒有用真實帳號實測過的項目。
 
-## 流程
+## 目前使用的模式：收件匣草稿（`TIKTOK_POST_MODE=inbox`）
 
-1. 使用者授權（Login Kit），scope：`video.publish`（直接發布）、`video.upload`（送到收件匣）。
+App 未通過審核時，直接發布（`DIRECT_POST`）只能送私人，且帳號必須是私人帳號。目前改走 `MEDIA_UPLOAD`，把輪播傳到使用者 TikTok 的收件匣，由使用者在 App 內選隱私、標示 AI 生成內容後自己按發布。授權只需要 `user.info.basic`、`video.upload`。
+
+以下是 2026-10-29 用真實帳號（Sandbox）實測到的行為，文件沒有寫明：
+
+| 項目 | 實測結果 |
+|---|---|
+| 上傳後狀態 | `SEND_TO_USER_INBOX`，代表上傳成功、等使用者處理 |
+| 使用者發布後狀態 | **不會變**，仍是 `SEND_TO_USER_INBOX`，查了 6 分鐘以上沒有變成 `PUBLISH_COMPLETE`，所以程式無法自動得知「已發布」 |
+| 對應做法 | 控制台內容庫的「標記為已發布」按鈕（`/library/mark-published`）：狀態改 `PUBLISHED`、刪除託管圖片，Notion 隨排程同步 |
+| 通知入口 | 草稿只會以系統通知「影片已準備就緒」出現，**通知只會打開最舊的待處理草稿**，不是最新的 |
+| 重複草稿 | 同一篇重送，TikTok 會多一份草稿，沒有去重；舊草稿無法在編輯器內刪除，只能發布成「僅限自己」再刪貼文 |
+| 圖片保留 | 草稿編輯時 TikTok 可能再讀取原圖，**發布前不能刪託管圖片**，否則編輯器會全黑 |
+
+因此排程在收件匣模式下，前一篇草稿還沒標記為已發布就不送下一篇（`scheduler._pending_inbox_draft`），並通知一次。不要手動重送已在收件匣的貼文。
+
+## 流程（直接發布模式）
+
+1. 使用者授權（Login Kit），scope：`video.publish`（直接發布）、`video.upload`（送到收件匣）。收件匣模式只要求 `user.info.basic,video.upload`。
 2. `POST /v2/post/publish/creator_info/query/`：取得目前可用的 `privacy_level_options`。
 3. `POST /v2/post/publish/content/init/`：`media_type=PHOTO`、`post_mode=DIRECT_POST`、`source=PULL_FROM_URL`，回傳 `publish_id`。
 4. `POST /v2/post/publish/status/fetch/`：輪詢，`PUBLISH_COMPLETE` 為成功，`FAILED` 看 `fail_reason`。
@@ -33,9 +50,9 @@
 
 ## 目前卡在哪
 
-1. **App 審核**：等待中。通過前只能私人發布。
-2. **網域驗證與圖片託管**：圖片必須在已驗證網域的公開 HTTPS 網址。`public/` 與 `vercel.json` 目前只放首頁、隱私權政策與服務條款，沒有圖片。這個網域要先在 Developer Portal 完成驗證（未驗證）。
-3. **回呼網址**：TikTok 是否接受 `http://127.0.0.1` 當 Redirect URI 尚未實測。
+1. **App 審核**：已送審（2026-10-28，In review），等待結果。通過前走收件匣模式，不使用直接發布。
+2. **網域驗證與圖片託管**：已完成。根網域 `carry-digital-nomad.in.net` 已驗證，圖片網址前綴目前仍用舊子網域 `autotok.…/media`（已驗證、已實測）；改用新子網域 `studio.…` 尚未測試。
+3. **回呼網址**：TikTok 不接受 `http://127.0.0.1`，改由 Vercel 授權頁（`api/index.py`）轉送到本機 `127.0.0.1:31026`。
 
 ## 圖片託管方案
 
@@ -73,7 +90,6 @@
 
 ## 自動化還缺的
 
-- 完成 App 審核與網域驗證（需要你操作）
-- 決定圖片託管方式並設定兩個環境變數
-- 用真實帳號跑一次 `SELF_ONLY` 發布，確認 JPEG、`is_aigc`、輪詢行為（未驗證）
-- 審核通過後把 `TIKTOK_APP_AUDITED` 改為 `true`
+- 等 App 審核結果；通過後把 `TIKTOK_APP_AUDITED` 改為 `true`，再評估是否改回直接發布（可全自動，也不需要手動標記）
+- 直接發布模式用真實帳號實測 JPEG、`is_aigc`、輪詢行為（未驗證；收件匣模式的 JPEG 已實測可用）
+- 收件匣模式需要使用者每篇手動發布並按「標記為已發布」，沒有辦法全自動

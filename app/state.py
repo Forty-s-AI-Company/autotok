@@ -503,12 +503,6 @@ class PostStateRepository:
                 return None
             return PostStatus(row["status"])
 
-    def get_platform_post_id(self, post_id: str) -> str | None:
-        """TikTok 的 publish_id（收件匣模式）或貼文編號；沒有就回 None。"""
-        with self._connect() as conn:
-            row = conn.execute("SELECT platform_post_id FROM content_posts WHERE post_id = ?", (post_id,)).fetchone()
-        return str(row["platform_post_id"]) if row is not None and row["platform_post_id"] else None
-
     def acquire_publish_lock(self, post_id: str, runner_id: str) -> bool:
         """嘗試取得指定 post_id 的發布鎖；若已被其他執行器鎖定或狀態為 UNKNOWN/PUBLISHED 則拒絕。"""
         current_status = self.get_post_status(post_id)
