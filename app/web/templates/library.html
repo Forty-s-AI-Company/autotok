@@ -39,7 +39,7 @@
       {{ gallery(v.zh_thumbs, 'zh-' ~ zi) }}
       {{ gallery(v.target_thumbs, 'tg-' ~ zi, True) }}
     </div>
-    <div class="row-flex"><a class="btn" href="/studio?post={{ p.post_id }}">到製作頁審稿</a> {{ action_btn('匯出發布包', '/library/export', busy='匯出中…', icon_name='i-ext', vals={'post_id': p.post_id}, title='把圖片與貼文文字存到本機資料夾，不會對 TikTok 發出請求') }}</div>
+    <div class="row-flex"><a class="btn" href="/studio?post={{ p.post_id }}">到製作頁審稿</a> {{ action_btn('匯出發布包', '/library/export', busy='匯出中…', icon_name='i-ext', vals={'post_id': p.post_id}, title='把圖片與貼文文字存到本機資料夾，不會對 TikTok 發出請求') }}{% if p.status.value == 'SENT_TO_INBOX' %} {{ action_btn('標記為已發布', '/library/mark-published', busy='處理中…', icon_name='i-check', vals={'post_id': p.post_id}, confirm='確定你已經在 TikTok App 按下發布了嗎？', title='你已在 TikTok App 按下發布後再按：狀態與 Notion 改為已發布，並刪除網站上的暫存圖片') }}{% endif %}</div>
     <dl class="kv-tight">
       <dt>核心切角</dt><dd>{{ p.core_angle or '—' }}</dd>
       <dt>CTA</dt><dd>{{ p.cta or '—' }}</dd>

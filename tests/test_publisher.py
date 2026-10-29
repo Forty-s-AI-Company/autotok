@@ -282,7 +282,7 @@ def test_reconcile_marks_published_once_user_posts_in_app(env) -> None:
     assert "還沒發布" in reconcile_inbox_post(repo, cfg, ACC, PID, transport=rec.transport)
     assert host_dir.is_dir()  # 還沒發布就不刪圖片
     assert repo.get_post_status(PID) == PostStatus.SENT_TO_INBOX
-    assert "PUBLISHED" in reconcile_inbox_post(repo, cfg, ACC, PID, transport=rec.transport)
+    assert "已標記為已發布" in reconcile_inbox_post(repo, cfg, ACC, PID, transport=rec.transport)
     assert repo.get_post_status(PID) == PostStatus.PUBLISHED and repo.get_platform_post_id(PID) == "777"
     assert set(rec.paths()) == {"fetch"}  # 只查詢狀態，沒有重新上傳
     assert not host_dir.exists()  # 已發布才清掉託管的圖片

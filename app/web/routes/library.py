@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, Response
 from app.adapters import get_uploader_adapter
 from app.errors import AutotokSystemError
 from app.models import CarouselPostPackage, PostStatus
+from app.publisher import mark_inbox_post_published
 from app.web.ui import render, toast
 
 router = APIRouter()
@@ -66,6 +67,20 @@ def library(request: Request, status: str = "") -> HTMLResponse:
         posts = [p for p in posts if p.status in groups[status]]
     views = [post_view(p, artifacts_root) for p in posts]
     return render(request, "library.html", "library", "內容庫", views=views, counts=counts, status=status, total=len(repo.list_posts(account_id=active.account_id)))
+
+
+@router.post("/library/mark-published")
+def mark_published(request: Request, post_id: str = Form(...)) -> Response:
+    """你在 TikTok App 按下發布後，回來標記：狀態改為已發布，Notion 跟著同步，並刪除網站上的暫存圖片。"""
+    repo = request.app.state.repo
+    active = repo.get_active_account()
+    if next((p for p in repo.list_posts(account_id=active.account_id) if p.post_id == post_id), None) is None:
+        return toast(Response(status_code=200), "找不到這篇貼文", "err")
+    try:
+        msg = mark_inbox_post_published(repo, request.app.state.settings, post_id)
+    except AutotokSystemError as exc:
+        return toast(Response(status_code=200), str(exc), "err")
+    return toast(Response(status_code=200), msg)
 
 
 @router.post("/library/export")

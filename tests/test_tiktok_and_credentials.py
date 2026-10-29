@@ -151,3 +151,31 @@ def test_panel_shows_live_token_expiry_not_the_first_authorisation_time(tmp_path
     repo.save_tiktok_binding("carry-vietnam-tw", token_ref="tiktok:carry-vietnam-tw", publish_capability="self_only", expires_at="2020-01-01T00:00:00+00:00")
     html = c.get("/tiktok/panel?account_id=carry-vietnam-tw").text
     assert "2020" not in html and "發布前會自動更新" in html
+
+
+def test_library_mark_published_updates_status_and_removes_hosted_images(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """收件匣草稿：使用者在 App 發布後按「標記為已發布」→ 狀態 PUBLISHED、刪除託管圖片；其他狀態一律拒絕。"""
+    from app.models import ContentSlot, PostStatus
+    from app.production import produce_carousel_with_qa_retry
+
+    monkeypatch.chdir(tmp_path)
+    site = tmp_path / "site"
+    cfg = AppSettings(
+        SQLITE_DB_PATH=tmp_path / "t.db", TIKTOK_VERIFIED_IMAGE_URL_PREFIX="https://cdn.example.com/m", IMAGE_HOST_SYNC_DIR=str(site), IMAGE_HOST_GIT_PUSH=False
+    )
+    app = create_app(tmp_path, cfg, allowed_hosts={"testserver"})
+    c = TestClient(app)
+    c.headers.update({"X-AutoTok-Token": app.state.csrf_token})
+    pkg, _, _ = produce_carousel_with_qa_retry(
+        slot=ContentSlot.NOON_1130, post_id="inb-1", scheduled_date_str="2026-10-21", output_base_dir=tmp_path / "artifacts" / "d"
+    )
+    pkg.status = PostStatus.READY
+    app.state.repo.upsert_post(pkg)
+    (site / "inb-1").mkdir(parents=True)
+    (site / "inb-1" / "slide_01.jpg").write_bytes(b"x")
+
+    c.post("/library/mark-published", data={"post_id": "inb-1"})  # 還是 READY：拒絕
+    assert app.state.repo.get_post_status("inb-1") == PostStatus.READY and (site / "inb-1").is_dir()
+    app.state.repo.update_status("inb-1", PostStatus.SENT_TO_INBOX)
+    c.post("/library/mark-published", data={"post_id": "inb-1"})
+    assert app.state.repo.get_post_status("inb-1") == PostStatus.PUBLISHED and not (site / "inb-1").exists()

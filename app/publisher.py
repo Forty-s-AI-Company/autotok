@@ -252,6 +252,27 @@ def _load_tokens(account_id: str, token_ref: str) -> TikTokTokens | None:
     return TikTokTokens.loads(raw) if raw else None
 
 
+def mark_inbox_post_published(
+    repo: PostStateRepository,
+    settings: AppSettings,
+    post_id: str,
+    *,
+    platform_post_id: str | None = None,
+    image_host: ImageHost | None = None,
+) -> str:
+    """收件匣草稿確認已在 TikTok 發布：狀態改 PUBLISHED（Notion 下次同步跟上），並刪除託管的暫存圖片。
+
+    TikTok 的收件匣模式不會回報使用者是否已發布，所以由使用者在控制台按「標記為已發布」呼叫這裡。
+    """
+    if repo.get_post_status(post_id) != PostStatus.SENT_TO_INBOX:
+        raise AutotokSystemError("這篇不是「已傳到收件匣」的草稿，不能標記為已發布", code="NOT_INBOX_DRAFT")
+    repo.update_status(post_id, PostStatus.PUBLISHED, platform_post_id=platform_post_id, last_error=None)
+    host = image_host or image_host_from_settings(settings)
+    if host is not None:
+        host.cleanup(post_id)  # 已發布，暫存圖片可以刪了
+    return "已標記為已發布"
+
+
 def reconcile_inbox_post(
     repo: PostStateRepository,
     settings: AppSettings,
@@ -282,11 +303,7 @@ def reconcile_inbox_post(
     state = str(st.get("status", ""))
     if state == "PUBLISH_COMPLETE":
         ids = [str(x) for x in st.get("publicaly_available_post_id", []) if x]  # type: ignore[union-attr]
-        repo.update_status(post_id, PostStatus.PUBLISHED, platform_post_id=ids[0] if ids else None, last_error=None)
-        host = image_host or image_host_from_settings(settings)
-        if host is not None:
-            host.cleanup(post_id)  # 已發布，暫存圖片可以刪了
-        return "已在 TikTok 發布，狀態改為 PUBLISHED"
+        return mark_inbox_post_published(repo, settings, post_id, platform_post_id=ids[0] if ids else None, image_host=image_host)
     return f"TikTok 狀態：{state or '未知'}，還沒發布"
 
 
