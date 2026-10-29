@@ -240,6 +240,29 @@ def test_blocked_is_not_a_failure_and_failed_notifies(env) -> None:  # noqa: ANN
     assert sent and "發布" in sent[0][0]
 
 
+def test_inbox_mode_holds_next_draft_until_previous_is_marked_published(env) -> None:  # noqa: ANN001
+    """TikTok 通知只打開最舊的待處理草稿：前一篇還沒發布，就不送下一篇，並通知一次。"""
+    cfg, repo, sent, calls, root = env
+    cfg.tiktok_post_mode = "inbox"
+    _publish_env(env, "public", auto_publish=True)
+    prev = make_post(repo, root, "carry-vietnam-tw", "2026-10-20", ContentSlot.MORNING_0700, status=PostStatus.SENT_TO_INBOX)
+    run(env, NOON_UTC)
+    run(env, NOON_UTC + timedelta(minutes=10))
+    assert calls.publish == [] and len(sent) == 1 and prev.post_id in sent[0][1]
+    repo.update_status(prev.post_id, PostStatus.PUBLISHED)  # 使用者按了「標記為已發布」
+    run(env, NOON_UTC + timedelta(minutes=20))
+    assert calls.publish == ["post-2026-10-20-1130"]
+
+
+def test_direct_mode_does_not_hold_publish_for_pending_drafts(env) -> None:  # noqa: ANN001
+    cfg, repo, _, calls, root = env
+    cfg.tiktok_post_mode = "direct"
+    _publish_env(env, "public", auto_publish=True)
+    make_post(repo, root, "carry-vietnam-tw", "2026-10-20", ContentSlot.MORNING_0700, status=PostStatus.SENT_TO_INBOX)
+    run(env, NOON_UTC)
+    assert calls.publish == ["post-2026-10-20-1130"]
+
+
 def test_publish_off_for_self_only_without_auto_publish(env) -> None:  # noqa: ANN001
     _, repo, _, calls, _ = env
     _publish_env(env, "self_only", auto_publish=False)

@@ -375,6 +375,16 @@ def _execute(repo: PostStateRepository, cfg: AppSettings, root: Path, a: Action,
         return False, str(exc)
 
 
+def _pending_inbox_draft(repo: PostStateRepository, account_id: str, exclude_post_id: str, now_utc: datetime) -> str:
+    """同一帳號還有「已傳到收件匣、尚未標記為已發布」的草稿就回它的 post_id，否則回空字串。"""
+    tz = ZoneInfo(repo.get_market_profile(account_id).timezone)
+    cutoff = (now_utc.astimezone(tz).date() - timedelta(days=INBOX_WINDOW_DAYS)).isoformat()
+    for p in repo.list_posts(account_id=account_id):
+        if p.post_id != exclude_post_id and p.status == PostStatus.SENT_TO_INBOX and not p.is_mock and p.scheduled_at_taipei[:10] >= cutoff:
+            return p.post_id
+    return ""
+
+
 def _reconcile_inbox(
     repo: PostStateRepository, cfg: AppSettings, ex: Executors, result: TickResult, now_utc: datetime, account_ids: list[str] | None
 ) -> None:
@@ -452,6 +462,12 @@ def tick(
                     continue
                 if a.state != "due":
                     continue
+                if a.kind == "publish" and cfg.tiktok_post_mode == "inbox":
+                    waiting = _pending_inbox_draft(repo, a.account_id, a.target, now_utc)
+                    if waiting:
+                        # TikTok 通知只會打開最舊的待處理草稿；前一篇沒處理完就送下一篇，新草稿會被擋在後面看不到
+                        _notify_once(repo, cfg, a, f"inbox_pending|{waiting}", f"{a.handle}　先不送下一篇草稿", f"{a.text}\n收件匣還有一篇沒發布的草稿（{waiting}）。請在 TikTok 發布後，到內容庫按「標記為已發布」，下一篇才會送出。", now_utc)
+                        continue
                 ok, info = _execute(repo, cfg, project_root, a, ex, now_utc)
                 if ok:
                     result.done.append(f"{a.text}：{info}"[:200])
